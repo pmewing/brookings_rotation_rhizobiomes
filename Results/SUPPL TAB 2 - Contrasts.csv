@@ -1,0 +1,7 @@
+"Crop","Contrast","CSCS","COWS","CPWS","CSSwP","CSSwSf"
+"corn","rotation length",4,-1,-1,-1,-1
+"corn","follow soy",0,1,1,-1,-1
+"corn","follow sunflower",0,-1,-1,-1,3
+"soy","rotation length",4,-1,-1,-1,-1
+"soy","follow corn",0,-1,-1,1,1
+"soy","with pea",0,-1,1,1,-1

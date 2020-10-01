@@ -1,0 +1,49 @@
+corn flowering biomass
+
+             Sum Sq Df   F value       Pr(>F)
+ROTATION   2710.547  4  3.628675 1.444218e-02
+YEAR      13702.028  1 73.372935 5.250326e-10
+Residuals  6349.329 34        NA           NA
+
+
+corn seedling biomass
+
+             Sum Sq Df   F value       Pr(>F)
+ROTATION   4.503244  4  4.362626 5.913483e-03
+YEAR      25.722781  1 99.678257 1.215680e-11
+Residuals  8.773975 34        NA           NA
+
+
+corn yield
+
+             Sum Sq Df    F value      Pr(>F)
+ROTATION   3.908239  4   8.634076 6.38622e-05
+YEAR      31.244212  1 276.098691 6.86111e-18
+Residuals  3.847549 34         NA          NA
+
+
+soy flowering biomass
+
+            Sum Sq Df  F value       Pr(>F)
+ROTATION  44.11756  4 16.18958 1.970563e-07
+YEAR      18.07222  1 26.52745 1.183671e-05
+Residuals 22.48175 33       NA           NA
+
+
+soy seedling biomass
+
+              Sum Sq Df   F value       Pr(>F)
+ROTATION  0.09216195  4  5.991007 9.726626e-04
+YEAR      0.12515267  1 32.542300 2.303984e-06
+Residuals 0.12691291 33        NA           NA
+
+
+soy yield
+
+             Sum Sq Df    F value       Pr(>F)
+ROTATION   5.248116  4   8.723924 1.052915e-04
+YEAR      26.638095  1 177.121617 1.247801e-13
+YEAR:REP   2.902746  6   3.216815 1.569536e-02
+Residuals  4.211043 28         NA           NA
+
+

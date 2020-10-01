@@ -1,0 +1,1067 @@
+---
+title: "Rotation Study Analysis: Overview and Part 1 - Plant Performance"
+subtitle: "Created April 2, 2020"
+author: "PME"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding=encoding, output_dir=here::here('Results'))})
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    df_print: paged
+    code_folding: hide
+  pdf_document: default
+  word_document: default
+---
+
+```{r set_options, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, 
+                      warning=FALSE,
+					            fig.align='center',
+					            fig.height=3.5,
+					            fig.width=7.5)
+```
+
+# Overview
+Soledad collected this data from the 4-year rotation study in 2016. Design:
+
+1. Rotations. 4 replicates of each
+  1. Corn-Pea-Winter Wheat-Soybean (CSWS)
+  2. Corn-Soybean-Spring Wheat-Sunflower (CSSwSf)
+  3. Corn-Soybean-Spring Wheat-Pea (CSSwP)
+  4. Corn-Oats-Winter Wheat-Soybean (COWP)
+  5. Corn-Soybean (CS)
+2. Crops Sampled:
+  1. Corn
+  2. Soybean
+3. Timepoints:
+  1. V2. Plant biomass, tissue, soil temp/moisture, microbial community
+  2. R1/Flowering. Same as V2, plus soil carbon/nitrogen
+  3. Maturity. Yield. 
+  
+## Hypotheses
+  
+We have hypothesized, based on observations on this long-term study as well as other plots, that both crops will yield better in long rotations. We hypothesize that nutrient uptake will not drive this observation. Instead, based on greenhouse results (Benitez-Ponce et al, 2018), long rotations will induce beneficial microbial communities. Finally, we hypothesize that a critical aspect of rotation is the inclusion of sunflower, based again on results from Benitez-Ponce et al (2018). Alternativly, the previous crop and rotation length may be important.
+
+In addition to testing these hypotheses, we hope to propose microbial community characteristics (taxa, etc) that are both responsive to rotation and predictive of plant health. These characteristics will form the basis for further study to validate. 
+
+## Workflow
+The goals and workflow are:
+
+1. Develop a scaffold model to understand drivers of yield. microbial community structure during the growing season to yield, via plant health. This will require:
+    1. Use linear modeling to determine crop yield responses to rotation, and aspects of rotation.
+        1. **Hypothesis** yields are higher in 4-year rotations and after non-corn/soybean crops.
+    2. Use confirmatory factor analysis to establish indicators of plant health. 
+        1. **Hypothesis** nutrients do not covary with biomass, which is the only indicator of plant health (measured)
+    3. Use structral equation modeling to establish relationships between plant health at each time point and yield.
+        1. **Hypothesis** Seedling health will predict flowering health, which will predict yield.
+    4. Use linear modeling to determine plant health response to rotation, and aspects of rotation.
+        1. **Hypothesis** Alternative previous crops will increase seedling health, due to transient/dynamic crop effects on the soil. 
+        2. **Hypothesis** Long rotations will improve flowering health, due to deeper, more static rotation legacies.
+    
+2. Test whether microbial communities are a plausible mechanism for plant health. This will require:
+    1. Determine whether microbial communities at each time point vary in response to rotation, and aspects of rotation that also affect health, using RDA.
+        1. **Hypothesis** All fungal and bacterial communities will respond to rotation.
+        2. **Hypothesis** Previous crop will have a strong affect at seedling, due to transient crop effects.
+        3. **Hypothesis** Rotation length will affect communities at flowering, due to structural community shifts.
+    2. Derive community metrics to use as predictors of plant health. Specifically, we want to find features of the community that vary consistently with rotation aspects. These will vary consistently with rotation and also with rotation contrasts. 
+        1. **Hypothesis** None. This is exploratory. Interpretation in step 3 below.
+    3. Determe whether these metrics predict plant health independently of rotation. This is mediation analysis.
+        1. **Hypothesis** These microbial predictors predict plant health independently of rotation characteristics, and therefore fully mediate the effect of rotation on plant health.
+    4. Incorporate these metrics into the structural equation model from Goal 1, to test whether these metrics do improve our understanding of the scaffold.
+        1. **Hypothesis** By incorporating microbial communities, we improve the explanatory power of the structural model, and therefore have a stronger understanding of the system.
+    
+3. Interpret metrics using functional/phylogenetic characteristics. This means FUNGuild and piecrust2.
+    1. **Hypothesis** Fungal pathogen/mutualist ratios will be higher in the corn/soybean rotation. Sunflower will specifically alter this, per Benitez-Ponce et al (2018). 
+    2. **Hypothsis** Bacterial communities will display more PGPR characteristics and more metabolic diversity in the 4-year rotation.
+
+## Load Data
+```{r load}
+# Custom functions
+functions = c('Convenience Functions.R')#, 
+              # 'Ordination Functions.R')
+source_functions = function() {
+  require(here)
+  for (i in functions) source(here('Scripts', i))
+}
+source_functions()
+
+# Libraries
+libs = c('magrittr', 
+         'here',
+         'car',
+         'multcomp',
+         'lavaan',
+         'lavaanPlot',
+         'semPlot',
+         'ggplot2',
+         'reshape2',
+         'lattice',
+         'gridExtra')
+load_libs(libs)
+```
+
+Data
+```{r}
+in_plot = 'Master Plot Data.csv'
+
+plot = here('Data', in_plot) %>% 
+              read.csv
+rownames(plot) = plot$SAMPLE_ID
+
+plot[, 1:14] %<>% lapply(as.factor)
+```
+
+Additional Variables
+```{r}
+pretty_rotation = c(CSCS = 'Corn, Soy',
+                    CPWS = 'Corn, Pea, Winter Wheat, Soy',
+                    CSSwP = 'Corn, Soy, Spring Wheat, Pea',
+                    CSSwSf = 'Corn, Soy, Spring Wheat, Sunflower',
+                    COWS = 'Corn, Oat, Winter Wheat, Soy')
+
+pretty_time = c(flowering = 'Flowering',
+                seedling = 'Seedling')
+
+pretty_crop = c(corn = 'Corn',
+                soy = 'Soybean')
+```
+
+Output structures
+```{r}
+linear_model = list()  # save the model for modifying with contrasts later.
+anova_out = list()  # for rotation linear models
+sem_out = list()
+```
+
+
+
+# Yield Responses to Rotations
+Use linear modeling to determine crop yield responses to rotation, and aspects of rotation.
+
+**Hypothesis** yields are higher in 4-year rotations and after non-corn/soybean crops.
+
+## Overall
+First, do yields vary in response to rotation?
+
+The base model is:
+
+`YIELD ~ ROTATION + YEAR + REP*YEAR`
+
+It does not check for a year*rotation effect, because we are only interested if we consistently see rotation differences across years. Rep effects are considered nested within year if at all present. Model assumptions checked already (`car::influenceIndexPlot()` and `car::qqPlot()`). I'll reduce the model via AIC with `step()`. 
+
+Starting with corn:
+```{r}
+crop = 'corn'
+
+df = subset(plot, CROP==crop & SAMPLING=='flowering', select=c('YEAR', 'REP', 'ROTATION', 'CROPYIELD'))
+df[, 'CROPYIELD'] %<>% scale
+
+mod = lm(CROPYIELD ~ ROTATION + YEAR/REP, data=df) %>%
+  step(trace=0) %>% 
+  extract2('call')
+a = eval(mod) %>% 
+  Anova
+signif(a, 3)
+
+mod_name = paste(crop, 'None', 'Yield', sep='_')
+anova_out[[mod_name]] = a
+
+linear_model[[crop]] = mod
+```
+Corn yields do not vary across reps. They do vary across years and, most importantly, with rotation (*p* = `r signif(a[[4]][1], 2)`).
+
+Moving on to soybean:
+```{r}
+crop = 'soy'
+
+df = subset(plot, CROP==crop & SAMPLING=='flowering', select=c('YEAR', 'REP', 'ROTATION', 'CROPYIELD'))
+df[, 'CROPYIELD'] %<>% scale
+
+mod = lm(CROPYIELD ~ ROTATION + YEAR/REP, data=df) %>%
+  step(trace=0) %>% 
+  extract2('call')
+a = eval(mod) %>% 
+  Anova
+signif(a, 3)
+
+mod_name = paste(crop, 'None', 'Yield', sep='_')
+anova_out[[mod_name]] = a
+
+linear_model[[crop]] = mod
+```
+Soybean yields also vary significantly across rotation (*p* = `r signif(a[[4]][1], 2)`).
+
+## Contrasts
+What aspects of rotation are causing yield changes?
+
+### Summary Functions
+```{r}
+.sig_stars = function(x) {
+  if (x > 0.1) out = ''
+  else if (x > 0.05) out = '.'
+  else if (x > 0.01) out = '*'
+  else if (x > 0.001) out = '**'
+  else out = '***'
+  return(out)
+}
+
+.gather_glht = function(x) {
+  out = summary(x) %>% 
+    extract2('test') %>% 
+    with(cbind(
+    coefficients,
+    sigma,
+    tstat,
+    pvalues
+  ))
+  return(out)
+}
+
+gather_glht = function(x, crop, sampling) {
+  tt = .gather_glht(x)
+  ss = tt[, 'pvalues'] %>% 
+    sapply(.sig_stars)
+  out = data.frame(
+    CROP = crop,
+    SAMPLING = sampling,
+    CONTRAST = rownames(tt),
+    tt,
+    SIGNIF = ss
+  )
+  rownames(out) = NULL
+  return(out)
+}
+```
+
+### Corn
+We expect with corn, the following will be important:
+
+1. A 4-year vs a 2-year rotation
+2. Following soybean vs following another crop
+3. Following sunflower
+
+We will construct these contrasts as previous crop is orthogonal to rotation length. We will test them after partialling out the year and/or rotation effects.
+```{r}
+contr = c(4, -1, -1, -1, -1,
+          0, 1, 1, -1, -1,
+          0, -1, -1, -1, 3) %>% 
+  matrix(nrow=3, byrow=TRUE) %>% 
+  set_rownames(c('ROTATION_LENGTH', 'FOLLOW_SOY', 'FOLLOW_SUNFLOWER')) %>% 
+  set_colnames(c('CSCS', 'COWS', 'CPWS', 'CSSwP', 'CSSwSf')) %>% 
+  .[, levels(plot[, 'ROTATION'])] # make sure it's the right order. glht doesn't check colnames.
+contr %<>% sweep(1, rowSums(abs(contr))/2, '/')
+contrasts = list(corn = contr)
+
+round(contrasts[['corn']], 3)
+```
+
+```{r}
+crop = 'corn'
+
+df = subset(plot, CROP==crop & SAMPLING=='flowering', select=c('YEAR', 'REP', 'ROTATION', 'CROPYIELD'))
+
+mod = lm(CROPYIELD ~ YEAR, data=df) %>% # We
+  residuals %>% 
+  data.frame(df, residuals=.) %>% # add results (residuals) to the dataframe
+  lm(residuals ~ ROTATION, data=.) %>%   # run the main model
+  glht(linfct=contrasts[[crop]])  # contrasts
+mod_s = summary(mod) %T>%
+  print %>% 
+  extract2('test')
+```
+
+```{r}
+cr = gather_glht(mod, crop, 'yield')
+contrast_results = cr
+```
+
+
+Rotation characteristics affected maize yield. Maize yields were `r signif(abs(mod_s$coefficients[['ROTATION_LENGTH']]), 2)` +/- `r signif(mod_s$sigma[['ROTATION_LENGTH']], 2)` kg/ha lower in the two-year rotation than in 4-year rotations (*p* = `r signif(mod_s$pvalues[1], 2)`). 
+However, this was not due to soybean as a previous crop: In the 4-year rotations, whether soybean preceded maize did not affect yields (*p* = `r signif(mod_s$pvalues[2], 2)`. 
+In contrast to our hypotheses, sunflower marginally decreased the yield of the following maize crop (`r signif(mod_s$coefficients['FOLLOW_SUNFLOWER'], 2)` +/- `r signif(mod_s$sigma['FOLLOW_SUNFLOWER'], 2)` kg/ha, *p* = `r signif(mod_s$pvalues[3], 2)`). 
+
+
+### Soy
+With soy, we are interested in:
+
+1. A 4-year vs a 2-year rotation
+2. Following corn vs following wheat
+3. In rotation with pea
+
+As with corn, we will construct these contrasts as previous crop is orthogonal to rotation length:
+```{r}
+contr = c(4, -1, -1, -1, -1,
+              0, -1, -1, 1, 1,
+              0, -1, 1, 1, -1) %>% 
+  matrix(nrow=3, byrow=TRUE) %>% 
+  set_rownames(c('ROTATION_LENGTH', 'FOLLOW_CORN', 'WITH_PEA')) %>% 
+  set_colnames(c('CSCS', 'COWS', 'CPWS', 'CSSwP', 'CSSwSf')) %>% 
+  .[, levels(plot[, 'ROTATION'])]
+contr %<>% sweep(1, rowSums(abs(contr))/2, '/')
+
+contrasts[['soy']] = contr
+round(contrasts[['soy']], 3)
+```
+
+We will test them after partialling out the year and/or rotation effects.
+```{r}
+crop = 'soy'
+
+df = subset(plot, CROP==crop & SAMPLING=='flowering', select=c('YEAR', 'REP', 'ROTATION', 'CROPYIELD'))
+
+mod = lm(CROPYIELD ~ YEAR/REP, data=df) %>% # partial out year and/or rep effects
+  residuals %>% 
+  data.frame(df, residuals=.) %>% # add results (residuals) to the dataframe
+  lm(residuals ~ ROTATION, data=.) %>%   # run the main model
+  glht(linfct=contrasts[['soy']])  # contrasts
+mod_s = summary(mod) %T>%
+  print %>% 
+  extract2('test')
+```
+
+Rotation characteristics also affected soybean yield. Soybean yields were `r signif(abs(mod_s$coefficients['ROTATION_LENGTH']), 2)` +/- `r signif(mod_s$sigma['ROTATION_LENGTH'], 2)` kg/ha lower in the two-year rotation than in 4-year rotations (*p* = `r signif(mod_s$pvalues[1], 2)`). 
+Whether maize preceded soybean additionally reduced yields: In the 4-year rotations, whether soybean followed maize instead of wheat reduced yields by `r signif(abs(mod_s$coefficients['FOLLOW_CORN']), 2)` +/- `r signif(mod_s$sigma['FOLLOW_CORN'])` `(*p* = `r signif(mod_s$pvalues[2], 2)`). 
+In contrast to our hypothesis, a rotation with pea did not affect soybean yields (*p* = `r signif(mod_s$pvalues[3], 2)`). 
+
+```{r}
+cr = gather_glht(mod, crop, 'yield')
+contrast_results %<>%
+  rbind(cr) %>% 
+  as.data.frame
+```
+
+# Plant Health
+Given these dramatic yield affects, we are interested in what signals of low yields we might see early in the season. We will use a confirmatory factor analysis approach to idenfity indicators of early-season plant health. We then will test whether these indicators of plant health predict yield.
+
+We predict that plant health will be indicated by plant biomass and nutrient content - higher macronutrients and higher biomass both will mean a healthier plant. Biomass will be the master of this relationship, as a smaller plant is not a healthier plant. Were larger plants to also have higher nutrient contents, this would support greater the hypothesis that nutrient uptake is behind the observed yield responses.
+
+We will construct models for each crop, and run as multigroup models - with a model for each year. We are interested in the overall result. The base model is:
+
+```{r out.width="75%"}
+knitr::include_graphics(here('Other', 'SEM Outline', 'Slide2.PNG'))
+```
+
+Where tissue nutrients and biomass meaures (boxes) are tied to the observation time (seedling, flowering). Errors on these may or may not be correlated. Stars are unknonw parameters. Boxes are observed (manifest) variables. Ovals are conceptual (latent) variables, which are essentially the covariance of the observed. Circles are residual errors of observed errors - i.e. the variation that doesn't correlate with the other observed variables. 
+
+### Approach
+1. Munge data into an appropriate form - a wide dataframe, with measures repeated by time point.
+2. Test the measurement model first: Do biomass and nutrients indicate plant health? Are errors correlated? These will be tested using confirmatory factor analysis. Biomass is the ultimate measure of health, and thus will always be fixed at 1.
+3. Test the structural model. These are the arrows among health/yield.
+
+### Wrangle to SEM dataframe
+Steps:
+1. ID common factors across T1 and T2
+2. Separate into T1 and T2 data
+3. Rename measures to include time point
+4. Remove empty columns
+5. Merge
+
+
+```{r wrangle_sem_df}
+# Drop soils data
+soils = c('X0_', 'X10_') %>% #tags indicating soil sampling depth
+  sapply(function(x) grepl(x, names(plot))) %>% 
+  rowSums %>% 
+  is_greater_than(0) #don't want either tag
+semdf = plot[,!soils]
+
+# ID factors that indicate sample units across sample timepoints.
+drop_facts = c('SAMPLE_ID', 'SAMPLING') # do not indicate sample units
+facts = sapply(semdf, is.factor) %>% 
+  semdf[.] %>% 
+  names
+facts %<>%
+  sapply(function(x) !(x %in% drop_facts)) %>% 
+  facts[.]
+is_ID = grepl('_ID', facts)
+facts %<>% .[!is_ID]
+
+
+# Split into T1 and T2
+time_split = split(semdf, semdf[, "SAMPLING"])
+names(time_split) %<>%
+  gsub('flowering', 'T2', .) %>% 
+  gsub('seedling', 'T1', .)
+
+# Rename data to reflect sample time. Subset factors per above. 
+time_split %<>% 
+  names %>% 
+  lapply(function(y) {
+    x = time_split[[y]]
+    
+    # select data
+    data = sapply(x, is.numeric) %>% 
+      x[.]
+    data %<>%
+      sapply(function(x) sum(!is.na(x)) > 0) %>% 
+      data[.]
+    names(data) %<>% paste(y, sep="_")
+    
+    # select factors
+    factors = x[facts]
+    
+    # recombine
+    out = cbind(factors, data) %>% 
+      as.data.frame
+
+    return(out)
+  })
+
+# Re-merge the dataframes
+semdf = time_split[[1]]
+for(i in 2:length(time_split)) {
+  semdf = merge(semdf, time_split[[i]], by=facts)
+}
+
+# Relable once-measured plant variables as such (without time info)
+oncevars = c('STAGE_1', 'STAGE_V7', 'STAGE_R3', 'YIELD', 'STAND_PLOT')
+for(i in oncevars) {
+  tt = grep(i, 
+            names(semdf)) 
+  names(semdf)[tt] = i
+}
+
+# Year as an indicator (for 2017)
+yearmat = model.matrix( ~ YEAR, data=semdf) # could also do YEAR == '2017'
+semdf[, 'iYEAR'] = yearmat[, 2]
+
+# Results!
+names(semdf)
+```
+
+
+### Corn
+First, scale the data and transform. Then run a model.
+
+#### Scale and transform
+``` {r sem_scale_transform, message=FALSE}
+crop = 'corn'
+predictors = c('AV_DW', 'N', 'P', 'K')  # both T1 and T2
+yield = 'YIELD'
+covariates = 'iYEAR'
+
+# expand predictors to T1 and T2
+predictor_tags = c('_T1', '_T2') %>% 
+  sapply(function(x) rep(x, length(predictors))) %>% 
+  c
+predictors %<>% paste0(predictor_tags)
+
+# subset to crop
+dd = subset(semdf, CROP==crop, select=c(predictors, yield, covariates)) %>% 
+  droplevels
+
+# Scale/Center numerics
+dd[, c(yield, predictors)] %<>% lapply(scale)
+
+# View distributions of factors
+pltdf = dd 
+pltdf[, 'iYEAR'] %<>% as.factor
+pltdf %<>% melt
+
+densityplot( ~ value | variable, group=iYEAR, data=pltdf)
+```
+These generally look OK within year. No need to scale.
+
+**Model Code**
+These models use year as a predictor for all measured variables. This is preferable to groupwise SEM because we are not interested in differences in paths among years, but rather, overall paths across years (including year for each partials out the year effect, while maintaining correct degrees of freedom, at the expense of busier graphs). Yet we still need to account for (very large) year effects on each variable, otherwise the paths will be dominated by year-induced covariances.
+```{r sem_model}
+{sem_latent = 
+  "
+  HEALTH_T1 =~ AV_DW_T1 + N_T1 + P_T1 + K_T1
+  HEALTH_T2 =~ AV_DW_T2 + N_T2 + P_T2 + K_T2
+  PERFORMANCE =~ YIELD
+  "
+}
+
+
+{sem_regression = "
+  PERFORMANCE ~ HEALTH_T1 + HEALTH_T2
+  HEALTH_T2 ~ HEALTH_T1
+  "
+}
+
+{cfa_covariates = "
+  # PERFORMANCE + HEALTH_T2 + HEALTH_T1 ~ iYEAR
+  AV_DW_T1 + AV_DW_T2 + N_T1 + N_T2 + P_T1 + P_T2 + K_T1 + K_T2 + YIELD ~ iYEAR
+  "
+}
+
+{sem_covar =
+  "
+  # latent variable covariances implied in CFA
+  
+  # indicator covariances
+  AV_DW_T1 ~~ AV_DW_T2
+  # N_T1 ~~ N_T2  # removed due to lack of relationship. Estimated negative in some cases. 
+  P_T1 ~~ P_T2 
+  K_T1 ~~ K_T2
+  "
+}
+
+{sem_var =
+  "
+  # indicator disturbances
+  YIELD ~~ 0*YIELD
+  # HEALTH_T1 ~~ 1*HEALTH_T1
+  "
+}
+
+{sem_intercepts = 
+  "
+  # automatically at zero
+  "
+}
+```
+
+#### Measurement model
+Are the latent variables justified - on theoretical grounds? Will use a confirmatory factor analysis model first - relationships between latent variables (health, performance) are covariances rather than regressions.
+```{r corn_cfa_model}
+mod1 = paste(sem_latent, sem_covar, cfa_covariates) %>% 
+  cfa(data=dd)
+
+fitstats = mod1@Fit@test$standard 
+
+varsize = 8
+semPaths(mod1, what='std',
+         rotation=1, style='lisrel', layout='tree', 
+         curvePivot=TRUE, sizeMan=varsize, sizeMan2=varsize/2, sizeLat=2*varsize, sizeLat2=varsize,
+         )
+# summary(mod1, standardized=TRUE)
+```
+Model Fit Indices: *χ*<sup>2</sup> = `r round(fitstats$stat, 2)`; *p* = `r sprintf("%.3f", round(fitstats$pvalue, 3))`; `r fitstats$df` df. This is a mediocre model.
+
+Nonetheless, a quick glance at this shows a few interesting outcomes. 
+
+1. Signs of coefficients and covariances are constant across years. We don't see a year effect.
+1. Higher nutrient concentrations tend to indicate lower "health" - especially at T2. This suggests that nutrient uptake is not limiting - that rather, plants can grow more biomass per nutrient, diluting nutrient uptake in the biomass. Why might this be?
+2. Related to this, nutrient content at T2 is inversely related to yield. Healthier plants have lower nutrient content.
+2. Dry weight is a good indicator of health. 
+3. Potassium at T1 is also a good indicator of health at T1, equivalent to dry weight, but not at T2. Why?
+4. Health at T1 covaries with health at T2, but not with yield very well. Health at T2 covaries yield.
+
+We can look at modification indices to see what relationships might be important that we didn't find.
+
+```{r corn_cfa_modindices}
+# calc modification indices
+mod_indices = modindices(mod1)
+
+# sort by modification indice (importance)
+sort_df = order(mod_indices[, 'mi'], decreasing=TRUE)
+mod_indices %<>% 
+  .[sort_df, ] %>% 
+  subset(mi>3)
+mod_indices
+```
+
+The first three columns specify the relationship. We're especially interested in the "mi" column. Per Brown and Moore (Ch. 22 in Hoyle, 2015), this is the expected decrease in $\chi^2$ if we *didn't* constrain the noted parameter - which is currently constrained at zero, formally. Values larger than 3.84 are "worth consideration". However, we are more interested in whether a paramter is both *important* and *theoretically justifiable*. 
+
+Generally, it looks like yield, biomass, and maybe potassium are related. 
+
+Overall, we might have come to a similar conclusion as from looking at the graph. Let's run a structural model (i.e. latent covariances are now regressions) to improve the interpretations.
+
+
+```{r corn_large_sem}
+mod_sem_large = paste(sem_latent, sem_regression, sem_var, sem_covar, cfa_covariates) %>% 
+  sem(data=dd, std.lv=TRUE)
+
+fitstats = mod_sem_large@Fit@test$standard 
+
+varsize = 8
+semPaths(mod_sem_large, what='est',
+         rotation=1, style='lisrel', layout='tree2', 
+         curvePivot=FALSE, sizeMan=varsize, sizeMan2=varsize/2, sizeLat=2*varsize, sizeLat2=varsize,
+         )
+```
+Model Fit Indices: *χ*<sup>2</sup> = `r round(fitstats$stat, 2)`; *p* = `r round(fitstats$pvalue, 3)`; `r fitstats$df` df. This is a poor model. 
+
+The overall conclusions are similar to the CFA. The difference is that Health (T1) has a weakly negative relationship with Health (T2), which is small enough to not be worth worry about. Mod indices are identical.
+
+#### Reduced SEM
+Moving forward, nutrients are not indicative of plant health in this case, excluding potassium in T1. Biomass is indicative. We will test two models:
+
+1. Seedling health as indicated equally by biomass and potassium. Yield the result flowering health.
+2. Seedling health as biomass only. Yield the result of flowering health.
+
+Potassium is dropped because even in the reduced model, it ruins fit. Removing it allows a reasonable model. AICs cannot be compared, however. 
+```{r corn_small_sem, warning=FALSE}
+
+with_potassium = {
+  "
+  HEALTH_T1 =~ a*AV_DW_T1 + a*K_T1  # constrained to equality for identification purposes.
+  HEALTH_T2 =~ AV_DW_T2
+  PERFORMANCE =~ YIELD
+  
+  PERFORMANCE ~ HEALTH_T2# + HEALTH_T1
+  HEALTH_T2 ~ HEALTH_T1
+  
+  AV_DW_T1 + AV_DW_T2 + YIELD ~ iYEAR
+  K_T1 ~ iYEAR
+  "
+} %>% 
+  sem(data=dd, std.lv=FALSE, se='boot')
+
+without_potassium_mediation = {
+  "
+  HEALTH_T1 =~ AV_DW_T1# + K_T1
+  HEALTH_T2 =~ AV_DW_T2
+  PERFORMANCE =~ YIELD
+  
+  PERFORMANCE ~ HEALTH_T2 + HEALTH_T1
+  HEALTH_T2 ~ HEALTH_T1
+  
+  AV_DW_T1 + AV_DW_T2 + YIELD ~ iYEAR
+  
+  #PERFORMANCE ~~ 0*K_T1
+  
+  "
+} %>% 
+  sem(data=dd, std.lv=FALSE, se='boot')
+
+without_potassium_direct = {
+  "
+  HEALTH_T1 =~ AV_DW_T1# + K_T1
+  HEALTH_T2 =~ AV_DW_T2
+  PERFORMANCE =~ YIELD
+  
+  PERFORMANCE ~ HEALTH_T2# + HEALTH_T1
+  HEALTH_T2 ~ HEALTH_T1
+  
+  AV_DW_T1 + AV_DW_T2 + YIELD ~ iYEAR
+  
+  #PERFORMANCE ~~ 0*K_T1
+  
+  "
+} %>% 
+  sem(data=dd, std.lv=FALSE, se='boot')
+
+model_compares = anova(with_potassium, without_potassium_mediation, without_potassium_direct) %T>%
+  print
+
+
+```
+The best model is `r rownames(model_compares)[which.min(model_compares$AIC)]`. It has the lowest AIC, and is unsaturated and well-fitting to boot. The with_potassium model is surprisingly less parsimonious than the full CFA. 
+
+```{r}
+corn_health_model = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.] %>% 
+  get
+
+lavaanPlot(model=corn_health_model, coef=TRUE, stand=FALSE)
+```
+
+```{r}
+summary(corn_health_model, std=TRUE)
+```
+
+Health (biomass) at T2 does predict performance, but only in 2017. Health at T1 consistently predicts health at T2.
+
+### Soybean 
+
+First, scale the data and transform. Then run a model.
+
+#### Scale and transform
+```{r soy_sem_scale_transform, message=FALSE}
+crop = 'soy'
+predictors = c('AV_DW', 'N', 'P', 'K')
+yield = 'YIELD'
+covariates = 'iYEAR'
+
+# expand predictors to T1 and T2
+predictor_tags = c('_T1', '_T2') %>% 
+  sapply(function(x) rep(x, length(predictors))) %>% 
+  c
+predictors %<>% paste0(predictor_tags)
+
+# subset to crop
+dd = subset(semdf, CROP==crop, select=c(predictors, yield, covariates)) %>% 
+  droplevels
+
+# Scale/Center numerics
+dd[, c(yield, predictors)] %<>% lapply(scale)
+
+# View distributions of factors
+pltdf = dd 
+pltdf[, 'iYEAR'] %<>% as.factor
+pltdf %<>% melt
+
+densityplot( ~ value | variable, group=iYEAR, data=pltdf)
+```
+These generally look great.
+
+**Model Code -->**
+```{r soy_sem_model}
+{sem_latent = 
+  "
+  HEALTH_T1 =~ AV_DW_T1 + N_T1 + P_T1 + K_T1
+  HEALTH_T2 =~ AV_DW_T2 + N_T2 + P_T2 + K_T2
+  PERFORMANCE =~ YIELD
+  "
+}
+
+{cfa_covariates = "
+  # PERFORMANCE + HEALTH_T2 + HEALTH_T1 ~ iYEAR
+  AV_DW_T1 + AV_DW_T2 + N_T1 + N_T2 + P_T1 + P_T2 + K_T1 + K_T2 + YIELD ~ iYEAR
+  "
+}
+
+{sem_regression = "
+  PERFORMANCE ~ HEALTH_T1 + HEALTH_T2
+  HEALTH_T2 ~ HEALTH_T1
+  
+  "
+}
+
+{sem_covar =
+  "
+  # latent variable covariances implied in CFA
+  
+  # indicator covariances
+  AV_DW_T1 ~~ AV_DW_T2
+  # N_T1 ~~ N_T2
+  P_T1 ~~ P_T2
+  K_T1 ~~ K_T2
+  "
+}
+
+{sem_var =
+  "
+  # indicator disturbances
+  # YIELD ~~ 0*YIELD
+  "
+}
+
+{sem_intercepts = 
+  "
+  # automatically at zero
+  "
+}
+```
+
+#### Measurement model
+Are the latent variables justified - on theoretical grounds? Will use a confirmatory factor analysis model first - relationships between latent variables (health, performance) are covariances rather than regressions.
+```{r soy_cfa_model}
+mod1 = paste(sem_latent, sem_var, sem_covar, cfa_covariates) %>% 
+  cfa(data=dd, 
+      std.lv=TRUE)
+
+fitstats = mod1@Fit@test$standard 
+anova(mod1)
+
+varsize = 8
+semPaths(mod1, what='est',
+         rotation=1, style='lisrel', layout='tree', 
+         curvePivot=TRUE, sizeMan=varsize, sizeMan2=varsize/2, sizeLat=2*varsize, sizeLat2=varsize,
+         )
+# summary(mod1, standardized=TRUE)
+```
+Deviance is huge. This is a terrible model that doesn't reflect the data.
+
+What it does say is that nutrients are not consistently related to health, if we view health as primarily defined by biomass. 
+
+We can try reducing it to biomasses and yield, per the corn model:
+
+#### Reduced SEM
+Moving forward, nutrients are not indicative of plant health in this case, except possibly potassium at T2. We'll run a similar series of models as with corn.
+
+```{r soy_small_sem}
+with_potassium = {
+  "
+  HEALTH_T1 =~ AV_DW_T1 
+  HEALTH_T2 =~ a*AV_DW_T2 + a*K_T2 # constrained to equality for identification purposes.
+  PERFORMANCE =~ YIELD
+  
+  PERFORMANCE ~ HEALTH_T2
+  HEALTH_T2 ~ HEALTH_T1
+  
+  AV_DW_T1 + AV_DW_T2 + YIELD ~ iYEAR
+  K_T1 ~ iYEAR
+  "
+} %>% 
+  sem(data=dd, std.lv=FALSE, se='boot')
+
+without_potassium = {
+  "
+  HEALTH_T1 =~ AV_DW_T1
+  HEALTH_T2 =~ AV_DW_T2
+  PERFORMANCE =~ YIELD
+  
+  PERFORMANCE ~ HEALTH_T2
+  HEALTH_T2 ~ HEALTH_T1
+  
+  AV_DW_T1 + AV_DW_T2 + YIELD ~ iYEAR
+  "
+} %>% 
+  sem(data=dd, std.lv=FALSE, se='boot')
+
+model_compares = anova(with_potassium, without_potassium) %T>%
+  print
+
+
+```
+The best model is `r rownames(model_compares)[which.min(model_compares$AIC)]`. It has the lowest AIC. It is saturated, so we can't test for model fit. The with_potassium model is least parsimonious.
+
+```{r}
+soy_health_model = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.] %>% 
+  get
+
+lavaanPlot(model=soy_health_model, coef=TRUE, stand=FALSE)
+```
+
+```{r}
+summary(soy_health_model, std=TRUE)
+```
+
+# Rotation aspects affecting plant health
+With plant health at the within-season sampling points established as generally predictive of yield, we are interested in which aspects of rotation might predict plant health. 
+
+Our hypotheses are:
+
+1. **Hypothesis** Alternative previous crops will increase seedling health, due to transient/dynamic crop effects on the soil. 
+2. **Hypothesis** Long rotations will improve flowering health, due to deeper, more static rotation legacies.
+
+## Corn
+### Seedling
+As with yield, we first test for an overall rotation effect, then delve into the aspects of rotation if the overall effect is supported.
+```{r}
+crop = 'corn'
+response = 'AV_DW'
+timing = 'seedling'
+
+df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', response))
+df[, response] %<>% scale
+
+mod = paste(response, 'ROTATION + YEAR/REP', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  step(trace=1) %>% 
+  extract2('call')
+a = eval(mod) %>% 
+  Anova
+
+mod_name = paste(crop, 'None', timing, response, sep='_')
+anova_out[[mod_name]] = a
+
+signif(a, 3)
+```
+`r crop` `r timing` biomass varied among rotation (*p* = `r signif(a[[4]][1], 2)`). What aspects of rotation seem to predict this?
+
+```{r}
+df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', response))
+mod = paste(response, 'YEAR', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  residuals %>% 
+  data.frame(df, residuals=.) %>% # add results (residuals) to the dataframe
+  lm(residuals ~ ROTATION, data=.) %>%   # run the main model
+  glht(linfct=contrasts[[crop]])  # contrasts
+mod_s = summary(mod) %T>%
+  print %>% 
+  extract2('test')
+```
+`r crop` `r timing` biomass was `r signif(abs(mod_s$coefficients['ROTATION_LENGTH']), 2)` +/- `r signif(mod_s$sigma['ROTATION_LENGTH'], 2)` g/plant lower in the two-year rotation than in 4-year rotations (*p* = `r signif(mod_s$pvalues[1], 2)`). 
+`r crop` `r timing` biomass was marginally lower following soybean (*p* = `r signif(mod_s$pvalues[2], 2)`), and unaffected by sunflower (*p* = `r signif(mod_s$pvalues[3], 2)`). 
+
+```{r}
+cr = gather_glht(mod, crop, timing)
+contrast_results %<>%
+  rbind(cr) %>% 
+  as.data.frame
+```
+
+
+### Flowering
+```{r}
+crop = 'corn'
+response = 'AV_DW'
+timing = 'flowering'
+
+df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', 'PLOT', 'CROP', response))
+t1_df = subset(plot, CROP==crop & SAMPLING=='seedling', select=c('YEAR', 'CROP', 'PLOT', 'AV_DW'))
+colnames(t1_df)[4] = 'T1_AV_DW'
+
+df = merge(df, t1_df, by=c('CROP', 'YEAR', 'PLOT'))
+
+mod = paste(response, 'ROTATION + T1_AV_DW + YEAR/REP', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  step(trace=1) %>% 
+  extract2('call')
+a = eval(mod) %>% 
+  Anova
+
+mod_name = paste(crop, 'None', timing, response, sep='_')
+anova_out[[mod_name]] = a
+
+signif(a, 3)
+```
+Essentially, biomass at seedling is interchangeable with rotation, but rotation is slightly more predictive. We will run that model:
+
+```{r}
+mod = paste(response, 'ROTATION + YEAR', sep='~') %>% 
+  formula %>% 
+  lm(data=df)
+a = Anova(mod)
+
+mod_name = paste(crop, 'None', timing, response, sep='_')
+anova_out[[mod_name]] = a
+
+signif(a, 3)
+```
+
+
+`r crop` `r timing` biomass also varied among rotations (*p* = `r signif(a[[4]][1], 2)`). What aspects of rotation seem to predict this?
+
+**Note**: mediation analysis by SEM not possible due to low sample sizes and lots of parameters for a composite variable. We use regression as an alternative. 
+
+```{r}
+# df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', response))
+mod = paste(response, 'YEAR + AV_DW', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  residuals %>% 
+  data.frame(df, residuals=.) %>% # add results (residuals) to the dataframe
+  lm(residuals ~ ROTATION, data=.) %>%   # run the main model
+  glht(linfct=contrasts[[crop]])  # contrasts
+mod_s = summary(mod) %T>%
+  print %>% 
+  extract2('test')
+```
+`r crop` `r timing` biomass responded only to rotation length: It was lower by 
+`r signif(abs(mod_s$coefficients['ROTATION_LENGTH']), 2)` +/- 
+`r signif(mod_s$sigma['ROTATION_LENGTH'], 2)` g/plant in the two-year rotation than in 4-year rotations (*p* = 
+`r signif(mod_s$pvalues[1], 2)`). Neither previous crop affected `r crop` `r timing` biomass (following soybean: *p* = 
+`r signif(mod_s$pvalues[2], 2)`; following sunflower: *p* = 
+`r signif(mod_s$pvalues[3], 2)`).
+
+```{r}
+cr = gather_glht(mod, crop, timing)
+contrast_results %<>%
+  rbind(cr) %>% 
+  as.data.frame
+```
+
+## Soy
+### Seedling
+As with yield, we first test for an overall rotation effect, then delve into the aspects of rotation if the overall effect is supported.
+```{r}
+crop = 'soy'
+response = 'AV_DW'
+timing = 'seedling'
+
+df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', response))
+# df[, response] %<>% scale
+
+mod = paste(response, 'ROTATION + YEAR/REP', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  step(trace=1) %>% 
+  extract2('call')
+a = eval(mod) %>% 
+  Anova
+
+mod_name = paste(crop, 'None', timing, response, sep='_')
+anova_out[[mod_name]] = a
+
+signif(a, 3)
+```
+`r crop` `r timing` biomass varied among rotation (*p* = `r signif(a[[4]][1], 2)`). What aspects of rotation seem to predict this?
+
+```{r}
+df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', response))
+mod = paste(response, 'YEAR', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  residuals %>% 
+  data.frame(df, residuals=.) %>% # add results (residuals) to the dataframe
+  lm(residuals ~ 0 + ROTATION, data=.) %>%   # run the main model
+  glht(linfct=contrasts[[crop]])  # contrasts
+mod_s = summary(mod) %T>%
+  print %>% 
+  extract2('test')
+```
+In contrast with corn, `r crop` `r timing` biomass varied with previous crop only: it was `r signif(abs(mod_s$coefficients['FOLLOW_CORN']), 2)` +/- `r signif(mod_s$sigma['FOLLOW_CORN'], 2)` g/plant lower in the two-year rotation than in 4-year rotations (*p* = `r signif(mod_s$pvalues[2], 2)`). 
+Neither rotation length (*p* = `r signif(mod_s$pvalues[1], 2)`, nor following sunflower (*p* = `r signif(mod_s$pvalues[3], 2)`) affected `r crop` `r timing` biomass. 
+
+```{r}
+cr = gather_glht(mod, crop, timing)
+contrast_results %<>%
+  rbind(cr) %>% 
+  as.data.frame
+```
+
+
+### Flowering
+```{r}
+timing = 'flowering'
+
+df = subset(plot, CROP==crop & SAMPLING==timing, select=c('YEAR', 'REP', 'ROTATION', 'PLOT', 'CROP', response))
+t1_df = subset(plot, CROP==crop & SAMPLING=='seedling', select=c('YEAR', 'CROP', 'PLOT', 'AV_DW'))
+colnames(t1_df)[4] = 'T1_AV_DW'
+
+df = merge(df, t1_df, by=c('CROP', 'YEAR', 'PLOT'))
+
+
+mod = paste(response, 'ROTATION + T1_AV_DW + YEAR/REP', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  step(trace=0) %>% 
+  extract2('call')
+a = eval(mod) %>% 
+  Anova
+
+mod_name = paste(crop, 'None', timing, response, sep='_')
+anova_out[[mod_name]] = a
+
+
+signif(a, 3)
+```
+`r crop` `r timing` biomass also varied among rotations (*p* = `r signif(a[[4]][1], 2)`). What aspects of rotation seem to predict this?
+
+```{r}
+mod = paste(response, 'YEAR', sep='~') %>% 
+  formula %>% 
+  lm(data=df) %>%
+  residuals %>% 
+  data.frame(df, residuals=.) %>% # add results (residuals) to the dataframe
+  lm(residuals ~ 0 + ROTATION:T1_AV_DW, data=.) %>%   # run the main model
+  glht(linfct=contrasts[[crop]])  # contrasts
+mod_s = summary(mod) %T>%
+  print %>% 
+  extract2('test')
+```
+`r crop` `r timing` biomass was lower by `r signif(abs(mod_s$coefficients['ROTATION_LENGTH']), 2)` +/- `r signif(mod_s$sigma['ROTATION_LENGTH'], 2)` g/plant in the two-year rotation than in 4-year rotations (*p* = `r signif(mod_s$pvalues[1], 2)`). 
+It was also lower by `r signif(abs(mod_s$coefficients['FOLLOW_CORN']), 2)` +/- `r signif(mod_s$sigma['FOLLOW_CORN'], 2)` g/plant in rotations following corn (*p* = `r signif(mod_s$pvalues[2], 2)`). Rotations with pea did not affect `r crop` `r timing` biomass (*p* = `r signif(mod_s$pvalues[3], 2)`).
+
+```{r}
+cr = gather_glht(mod, crop, timing)
+contrast_results %<>%
+  rbind(cr) %>% 
+  as.data.frame
+```
+
+Therefore, both corn and soybean suffered legacy effects of following soybean or corn, respectively, at the seedling stage. By flowering, plants growing in the 2-year rotation consistently showed lower biomass. 
+
+Structural equation modeling results highlight how these early- and mid-season rotation effects on plant health ultimately translated to lower yields. 
+
+#### Save Objects
+Contrasts, pretty names, contrast results
+```{r}
+here('Data', 'Contrasts.Rdata') %>% 
+  save(contrasts, file=.)
+
+here('Data', 'Pretty Names.Rdata') %>% 
+  save(pretty_crop, pretty_rotation, pretty_time,
+       file=.)
+
+here('Results', 'Contrast Results CROP.csv') %>% 
+  write.csv(contrast_results, ., row.names=FALSE)
+
+crop_anova = anova_out
+here('Data', 'Crop ANOVAs.Rdata') %>% 
+  save(crop_anova, 
+            file=.)
+```

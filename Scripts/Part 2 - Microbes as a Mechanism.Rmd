@@ -1,0 +1,2066 @@
+---
+title: "Rotation Study Analysis: Part 2 - Microbes as a mechanism"
+subtitle: "Created April 2, 2020"
+author: "PME"
+date: "`r format(Sys.time(), '%d %B, %Y, %H:%M')`"
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding=encoding, output_dir=here::here('Results'))})
+output:
+  html_document:
+    toc: true
+    toc_depth: 5
+    toc_float: true
+    df_print: paged
+    code_folding: hide
+  pdf_document: default
+  word_document: default
+---
+
+```{r set_options, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, 
+                      warning=FALSE,
+					            fig.align='center',
+					            fig.height=3.5,
+					            fig.width=7.5,
+					            cache=TRUE)
+```
+
+# Overview
+In part 1, we established that:
+
+1. Corn and soybean yields both responded to rotation. Specifically, corn yields were lower in the 2-year rotation, and soybean yields were lower in the two-year rotation and following corn.
+2. Plant health at the seedling and flowering stage predicted both corn and soybean yield - healthy crops at the seedling stage tended to be healthy at flowering, and also yielded more.
+3. Rotation aspects altered plant health as well as yield. Specifically:
+    - corn health was lower in the 2-year rotation at both seedling and flowering stages, and marginally lower following soybean at the seedling stages. This suggests that:
+        a) soybean suppresses the health of the following corn crop
+        b) corn in the 4-year rotation has greater capacity to recover from the soybean suppression
+    - soybean health was lower following corn at the seedling stage, and lower in the 2-year rotation and following corn at the flowering stage. This suggests that:
+        a) corn suppresses the health of the following soybean crop
+        b) soybean in the 4-year rotation can recover from corn suppression.
+4. Nutrient uptake was not a reliable indicator of plant health - only biomass was. This suggests a microbial mechanism.
+  
+From the overview of Part 1, we can now pursue this microbial mechanism, and identify candidate microbial characteristics to use as indicators for "good" communities - i.e. putative causal agents. The workflow is:
+
+1. Determine whether microbial communities at each time point vary in response to rotation, and aspects of rotation that also affect health, using RDA.
+    1. **Hypothesis** All fungal and bacterial communities will respond to rotation.
+    2. **Hypothesis** Previous crop will have a strong affect at seedling, due to transient crop effects.
+    3. **Hypothesis** Rotation length will affect communities at flowering, due to structural community shifts.
+2. Derive community metrics to use as predictors of plant health. Specifically, we want to find features of the community that vary consistently with rotation aspects. These will vary consistently with rotation and also with rotation contrasts. 
+    1. **Hypothesis** None save an abundance of pathogens. This is exploratory. Interpretation in step 3 below.
+3. Determe whether these metrics predict plant health independently of rotation. This is mediation analysis.
+    1. **Hypothesis** These microbial predictors predict plant health independently of rotation characteristics, and therefore fully mediate the effect of rotation on plant health.
+4. Incorporate these metrics into the structural equation model from Goal 1, to test whether these metrics do improve our understanding of the scaffold.
+    1. **Hypothesis** By incorporating microbial communities, we improve the explanatory power of the structural model, and therefore have a stronger understanding of the system.
+
+If microbes are a plausible mechanism for suppressed corn and soybean yield in the 2-year rotation, we will move to interpreting the putative causal agents using [FUNGuild](https://doi.org/10.1016/j.funeco.2015.06.006) and [picrust2](https://doi.org/10.1101/672295). 
+
+1. **Hypothesis** Fungal pathogen/mutualist ratios will be higher in the corn/soybean rotation. Sunflower will specifically alter this, per Benitez-Ponce et al (2018). 
+2. **Hypothsis** Bacterial communities will display more PGPR characteristics and more metabolic diversity in the 4-year rotation.
+
+Unlike Part 1, this analysis will be completed on a crop-by-crop basis.
+
+## Notes on analyzing high throughput sequencing barcoding data.
+We'll process both 16S and ITS data as [compositional data](https://doi.org/10.1016/j.annepidem.2016.03.003). The characteristics of this are:
+
+1. The absolute values of individuals are meaningless
+2. The total values within samples are meaningless
+3. Due to the unit-sum constraint (because total values are meaningless, so we work with proportions), all features (taxa) are inherently correlated with each other. Data that are transformed to a unit-sum are 'closed'. 
+4. Therefore, only relative abundance is meaningful, but only in relation to the relative abundance of other components in the sample. 
+
+
+As a result, the analysis needs to preserve a few properties to be robust (see [Greenacre and Lewi (2009)](https://doi.org/10.1007/s00357-009-9027-y)):
+
+1. Subcompositional coherence. Analyzing a subset of the features (reclosed) will give the same results regardless of whether additional features are taken into consideration; adding new features won't make samples more alike. This is essential because we know we aren't sampling all taxa in each sample.
+2. Scale invariance. Changing units doesn't change the result, as long as the constant sum among samples is obeyed. This means that normalization methods don't matter, as long as we then close the data.
+2. Distributional equivalence. Merging features won't change results. Therefore, we can cluster taxa at 97% or as actual sequence variants, and distances among samples won't change.
+
+Weighted log-ratio analysis is the ordination approach to handling such data. Because it requires logarithms, it requires some way to handle zeros in the dataset, ideally that also preserves relationships among observed data. [Martin-Fernandez *et al*. (2015)](https://doi.org/10.1177/1471082X14535524) develop an imputation approach that accomplishes this goal, and implement it in the package, `zCompositions`.
+
+We still want to remove extremely rare taxa - those that are so rare their varaince can't be estimated - and samples with so few taxa we can't estimate variance on sample relationships to other samples. We will retain samples with at least 3 taxa, and taxa appearing in at least 3% of samples - which works out to 5 for this 160 sample dataset.
+
+We also want to account for sampling depth, so samples will be weighted based on log10 total reads.
+
+## Load Data
+Packages and Custom Scripts
+```{r load, cache=FALSE}
+# Custom functions
+functions = c('Convenience Functions.R', 
+              # 'Ordination Functions.R',
+              'Part 2 - Helper Functions.R')
+source_functions = function() {
+  require(here)
+  for (i in functions) source(here('Scripts', i))
+}
+source_functions()
+
+# Libraries 
+libs = c('magrittr', 
+         'here',
+         'zCompositions', # for zero imputation
+         'easyCODA',      # for CLR transformation
+         'phyloseq',      # convenient object management
+         'lavaan',        # SEM
+         'lavaanPlot',    # SEM plots?
+         'semPlot',       # ugly but effective plots
+         'ggplot2'
+         )     
+load_libs(libs)  # load libraries, and install if necessary
+
+#pcwOrd
+load_pcwOrd = function() {
+  here('Scripts', 'pcwOrd_0.2.1.Rdata') %>% 
+    load(envir=.GlobalEnv)
+}
+load_pcwOrd()
+
+# pcwOrd permutations
+nperms = 999
+
+# lavaan option
+sem_error = 'bootstrap'
+# sem_error = 'default'
+```
+
+Data Sources
+```{r}
+in_plot = 'Master Plot Data.csv'
+
+in_bac_counts = 'Master 16S Counts.csv'
+in_bac_taxonomy = 'Master 16S Taxonomy.csv'
+
+in_fun_counts = 'Master ITS Counts.csv'
+in_fun_taxonomy = 'Master ITS Taxonomy.csv'  # from Wrangle - ASV Taxonomy. Basically make sure ASV IDs are consistently formatted across years. 
+in_funguild = 'FUNGuild Taxonomy.guilds.csv' # direct output from FUNGuild converted to .csv in MSExcel
+
+in_obj = c('Contrasts.Rdata',
+           'Pretty Names.Rdata')
+```
+
+Plot data, as before.
+```{r}
+plot = here('Data', in_plot) %>% 
+              read.csv(stringsAsFactors=FALSE)
+plot[, 1:14] %<>% lapply(as.factor)
+corner(plot)
+```
+
+```{r cache=FALSE}
+bac_ps = load_to_phyloseq('BACTERIA_ID',    # Part 2 helper functions. Includes zero replacement.
+                          in_bac_counts,
+                          in_bac_taxonomy,
+                          plot,
+                          min_tax=3,
+                          min_occurrances=8,
+                          min_reads=1)
+# remove Bradyrhizobium
+rw = attr(bac_ps, 'row_weights')
+bac_ps %<>% subset_taxa(Genus != 'Bradyrhizobium')
+otu_table(bac_ps) %<>% 
+  close_matrix %>% 
+  otu_table(taxa_are_rows=FALSE)
+attr(bac_ps, 'row_weights') = rw
+
+fun_ps = load_to_phyloseq('FUNGI_ID', 
+                          in_fun_counts,
+                          in_fun_taxonomy,
+                          plot,
+                          min_tax=3,
+                          min_occurrances=8,
+                          min_reads=1) # per sample
+
+phylo_obj = list(`16S` = bac_ps,
+                 `ITS` = fun_ps)
+
+print(phylo_obj)
+```
+
+For comparison, the original ITS data (sent through ITSxpress) was:
+```
+$ITS
+phyloseq-class experiment-level object
+otu_table()   OTU Table:         [ 201 taxa and 148 samples ]
+sample_data() Sample Data:       [ 148 samples by 53 sample variables ]
+tax_table()   Taxonomy Table:    [ 201 taxa by 7 taxonomic ranks ]
+```
+
+FUNGuild
+```{r}
+funguild = here('Data', in_funguild) %>% 
+  read.csv(stringsAsFactors=FALSE, row.names=1) %>% 
+  .[rownames(tax_table(fun_ps)), ]
+corner(funguild)
+```
+
+
+Contrasts and nice names for plotting
+```{r}
+for (i in in_obj) load(here('Data', i), envir=.GlobalEnv)
+lapply(contrasts, round, 3)
+```
+
+## Output Structures
+```{r cache=FALSE}
+plot_out = matrix(nrow=0, ncol=6)
+colnames(plot_out) = c('CROP', 'SAMPLING', 'CONTRAST', 'BARCODE', 'BIOMASS', 'SCORE')
+
+stats_out = matrix(nrow=0, ncol=20)
+colnames(stats_out) = c('CROP', 'SAMPLING', 'CONTRAST', 'BARCODE', 'ORD_F', 'ORD_DF', 'ORD_P', 'YEAR_F', 'YEAR_DF', 'YEAR_P', 'YEAR_COEF', 'YEAR_SE', 'CONTRAST_COEF', 'CONTRAST_SE', 'CONTRAST_T', 'CONTRAST_P', 'AXIS_COEF', 'AXIS_SE', 'AXIS_T', 'AXIS_P')
+
+# initiate data.frames for storing results
+full_ord_results = update_full_ord_results()
+contrast_ord_results = update_contrast_ord_results()
+taxa_results = update_taxa_results()
+ord_ls = list()  # for storing ordinations, including permutations.
+sem_ls = list()
+```
+
+
+# Corn
+The workflow is, for each subset of crop, sampling time, and community:
+
+1. See if the community responds to rotation overall. If yes, continue.
+2. Check if the community responds to plant health-predicitive contrasts. If yes, continue.
+3. ID the taxa that most credibly respond to contrasts. If yes, continue.
+4. With bacteria, determine whether these taxa predict plant health independently of contrasts.
+
+Due to low sample sizes (N=8 for each treatment \* crop \* sampling time combination across years), marginal effects (0.1 > *p* > 0.05), and taxa that individually respond to contrasts at 40% false discovery rates will be further investigated. This is reasonable as the goal in selecting taxa is to reduce noise in the dataset. This is a low-effort way to separating taxa that seem to respond to rotation from the ones that don't.
+
+## Seedling
+### Rotation
+As with univariate tests, we'll first test whether our response, the microbial community, responds to the overall treatments. If so, we will test the contrasts that were also predictive of plant health (biomass). The dataset will be reduced to those taxa responding to the contrast
+
+The output for each crop and stage will be a graph of:
+
+- y = biomass
+- x = microbial contrast score
+
+Plus a sem graph showing the relationships leading to biomass.
+
+First we see if these communities respond to the treatment.
+
+#### Bacteria
+```{r}
+crop = 'corn'
+sampling = 'seedling'
+constraint = 'ROTATION'
+partial = 'YEAR'
+barcode = '16S'
+contrast = 'None'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+# Part 2 - Helper Functions. 
+#' Subsets phylo object by crop and sampling. 
+#' Builds Y = otu_table(ps_obj), X = sample_data(ps_obj)[constraint], and Z = sample_data(ps_obj)[partial] matrices
+#' optionally uses a contrast for X as defined in contrast
+#' Performs partial constrained weighted log-ratio analysis with pcwOrd::pcwOrd:
+#' - row weights are log10 total reads
+#' - column weights are mean relative abundances
+#' - otu_table is center-log-ratio-transformed by easyCODA::CLR
+#' Produces diagnostic plots and returns the pcwOrd object.
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+
+# pcwOrd function
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+Here is the model PERMANOVA (pseudo-F) test, based on `r nperms` permutations.
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r round(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test contrasts with the `r barcode` dataset.
+
+#### Fungi
+```{r}
+barcode = 'ITS'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r ord_variance(ord)$summary['pct_total', 'constrained']` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test contrasts with the `r barcode` dataset.
+
+
+### Contrasts
+#### Follow Soy
+##### Bacteria
+```{r}
+contrast = 'FOLLOW_SOY'
+barcode = '16S'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did not respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`). We will not test it further or reduce features. We'll just save the scores for plotting.
+
+##### Fungi
+```{r}
+barcode = 'ITS'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+Our contrast has a negative score on the constrained axis, so we will invert it.
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`). 
+
+#### Predictive Communities
+Here are the axis scores so far. Note we will NOT include 16S in the model.
+```{r chache=FALSE}
+response = 'AV_DW'
+
+find_ords = c(crop, sampling, contrast) %>% 
+  sapply(grepl, names(ord_ls)) %>% 
+  apply(1, all)
+local_ords = ord_ls[find_ords] %>% 
+  lapply(extract2, 'observed')
+
+sem_name = paste(crop, sampling, contrast, sep='_')
+
+#' combine axis (standard) scores plus response, contrast, and partial data into a single data.frame for modeling.
+#' contrast_row is the row of contrasts[[crop]]. Must be a matrix.
+#cc = contrasts[[crop]][contrast, , drop=FALSE]
+mod_df = generate_prediction_df(local_ords, 
+                                crop, 
+                                sampling, 
+                                contrasts[[crop]][contrast, , drop=FALSE], 
+                                partial, 
+                                constraint, 
+                                response, 
+                                plot,
+                                auto_invert=TRUE)  # if contrast and axis are negatively correlated, for consistency.
+head(mod_df)
+```
+
+The SEM models are:
+
+- `no_mediation`: A null model where `r response` responds only to `r contrast`
+- `partial_mediation`: A full model where `r response` responds to both `r contrast` and the community
+- `full_mediation`: An intermediate model where `r response` responds only to the community
+
+In all models, `r partial` is included as a predictor of `r response`, as well.
+
+Errors will be estimated by bootstrapping 1000 times, missing values using maximum likelihood imputation, and the overall models by maximum likelihood. 
+
+```{r}
+mod_df %<>% na.omit
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_ITS ~~ 0*AV_DW
+  # Calculate pathways for easy interpretation
+  direct := c
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  
+  direct := c
+  total := c + (a*b)
+  indirect := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS# + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  
+  # direct := c
+  # total := c + (a*b)
+  indirect := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_mediation, partial_mediation_ITS, full_mediation_ITS) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_mediation = no_mediation, 
+                          partial_mediation_ITS = partial_mediation_ITS, 
+                          full_mediation_ITS = full_mediation_ITS, 
+                          df = mod_df)
+```
+The best model is `r keep_mod`.
+
+```{r cache=FALSE}
+mod_summ = summary(get(keep_mod), std=TRUE)
+```
+This is an excellent model. 
+
+```{r fig.height=3, fig.width=4, cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+
+
+##### Plot
+This is a marginal plot, where year effects are removed for clarity of the axis effects. 
+```{r fig.width=4, fig.height=3, cache=FALSE}
+select_barcode = 'ITS'
+#' plot response ~ barcode_axis based on data in mod_df created above.
+#' add shapes for partial and colors for constraint
+#' response is optionally the residuals of response ~ partial.
+#' returns a ggplot object for easy post-hoc formatting
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_effect(select_barcode, response, partial, constraint, contrast, mod_df, partial_response=TRUE, nn)
+```
+
+
+##### Candidate Taxa
+The taxa that load most credibly onto this axis are:
+```{r}
+select_barcode = 'ITS'
+
+is_ITS = select_barcode=='ITS'
+if (is_ITS) {
+  depth = 'Species'
+  guilds = funguild
+} else {
+  depth = 'Genus'
+  guilds = NULL
+}
+
+ord_obj = paste(crop, sampling, select_barcode, contrast, sep='_') %>% 
+  ord_ls[[.]]
+
+#' Select the features in feature_F of ord_permutations$results that have an adjusted
+#' p-value < max_p_adjust. Name these taxa based on tax_table(plylo_obj).
+#' Include additional info like guilds and (contribution, sensu Greenacre 2013) scores. 
+top_tax = id_top_tax(ord_obj,
+                     phylo_obj[[select_barcode]], 
+                     metric='feature_F',
+                     phylo_depth=depth, 
+                     max_p_adj=1,
+                     max_p_val=1,
+                     guilds=funguild,
+                     auto_invert=TRUE) %>% 
+  subset(pcAxis1^2 > 0.01)
+tt_sort = order(top_tax$pcAxis1, decreasing=TRUE)
+# subset(top_tax[tt_sort, ], pcAxis1^2 > 0.005)
+# top_tax[tt_sort, ]
+# tt_sort = order(top_tax$pcAxis1, decreasing=TRUE)
+# top_tax %<>% .[tt_sort, ] %T>% print# %>% 
+  # subset(pcAxis1^2 > 0.005) %T>% 
+  # print
+# subset(top_tax[tt_sort, ], p_val < 0.05)
+```
+
+```{r cache=FALSE}
+taxa_results %<>% update_taxa_results(crop, sampling, select_barcode, contrast, top_tax[tt_sort, ])
+```
+We can see a number of pathogens associated with soybean as a previous crop. These all "contribute" 1% to the solution. 
+
+#### Rotation Length
+##### Bacteria
+```{r}
+contrast = 'ROTATION_LENGTH'
+barcode = '16S'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`. This is an intermediate (*p* = `r signif(perms$results$model_F['p_val'], 2)`) effect with a clear visual outcome in both this ordination in the response ordination. We will investigate taxa. 
+
+##### Fungi
+```{r}
+barcode = 'ITS'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`. This is a strong (*p* = `r signif(perms$results$model_F['p_val'], 2)`) effect. We will investigate taxa. 
+
+#### Predictive Communities
+Here are the axis scores combined with other model parameters.
+```{r}
+find_ords = c(crop, sampling, contrast) %>% 
+  sapply(grepl, names(ord_ls)) %>% 
+  apply(1, all)
+local_ords = ord_ls[find_ords] %>% 
+  lapply(extract2, 'observed')
+
+sem_name = paste(crop, sampling, contrast, sep='_')
+mod_df = generate_prediction_df(local_ords, 
+                                crop, 
+                                sampling, 
+                                contrasts[[crop]][contrast,,drop=FALSE], 
+                                partial, 
+                                constraint, 
+                                response, 
+                                plot,
+                                auto_invert=TRUE)  # if contrast and axis are negatively correlated, for consistency.
+head(mod_df)
+```
+
+The SEM models are:
+
+- `no_mediation`: A null model where `r response` responds only to `r contrast`
+- `partial_mediation`: A full model where `r response` responds to both `r contrast` and the community
+- `full_mediation`: An intermediate model where `r response` responds only to the community
+
+In all models, `r partial` is included as a predictor of `r response`, as well.
+```{r}
+mod_df %<>% na.omit
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ 0*AV_DW
+  AXIS_16S ~~ 0*AV_DW
+  AXIS_ITS ~~ AXIS_16S
+  
+  # Calculate pathways for easy interpretation
+  direct := c
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_full = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + e*AXIS_16S + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ AXIS_16S
+    
+  direct := c
+  total := c + (a*b) + (d*e)
+  indirect_its := a*b
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_16S = {
+  "
+  AV_DW ~ YEAR + e*AXIS_16S + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ 0*AV_DW
+  AXIS_ITS ~~ AXIS_16S
+    
+  direct := c
+  total := c + (d*e)
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_16S ~~ 0*AV_DW
+  AXIS_ITS ~~ AXIS_16S
+    
+  direct := c
+  total := c + (a*b)
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_full = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + e*AXIS_16S
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ AXIS_16S
+  
+  indirect_its := a*b
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_16S = {
+  "
+  AV_DW ~ YEAR + e*AXIS_16S
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ AXIS_16S
+  AXIS_ITS ~~ 0*AV_DW
+  
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ AXIS_16S
+  AXIS_16S ~~ 0*AV_DW
+  
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_mediation, partial_mediation_full, partial_mediation_16S, partial_mediation_ITS, full_mediation_full, full_mediation_16S, full_mediation_ITS) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_mediation = no_mediation, 
+                          partial_mediation_ITS = partial_mediation_ITS, 
+                          partial_mediation_16S = partial_mediation_16S, 
+                          full_mediation_ITS = full_mediation_ITS, 
+                          full_mediation_16S = full_mediation_16S, 
+                          full_mediation_full = full_mediation_full,
+                          df = mod_df)
+```
+The best model is `r keep_mod`. However, this is only by 0.03 AIC points - within rounding error. We will select the no_mediation model as it is the "null". 
+
+```{r cache=FALSE}
+mod_summ = summary(get(keep_mod), std=TRUE)
+```
+This is an excellent model. 
+
+```{r fig.height=3, fig.width=4, cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+Neither barcode community credibly explains `r crop; sampling` biomass better than `r contrast` alone. 
+
+
+#### Combined Models
+Combining both contrast axis scores into a data.frame to build a `r crop` `r sampling` biomass model. 
+```{r}
+contrast = c('FOLLOW_SOY', 'ROTATION_LENGTH')
+barcode = c('ITS', 'ITS')
+
+sem_name = sapply(seq_len(length(barcode)), function(x) paste(crop, sampling, barcode[x], contrast[x], sep='_'))
+
+local_ords = ord_ls[sem_name] %>% 
+  lapply(extract2, 'observed')
+mod_df = lapply(contrast, function(x) {
+  out = generate_prediction_df(local_ords, 
+                         crop, 
+                          sampling, 
+                          contrasts[[crop]][x,,drop=FALSE], 
+                          partial, 
+                          constraint, 
+                          response, 
+                          plot,
+                          auto_invert=TRUE)   # if contrast and axis are negatively correlated, for consistency.
+  is_axis = grepl('AXIS', names(out))
+  names(out)[is_axis] %<>% paste(x, sep='_')
+  return(out)
+}) %>% 
+  set_names(contrast)
+
+tt = mod_df[[1]]
+if (length(mod_df) > 1) {
+  for (i in 2:length(mod_df)) {
+    merge_by = 'SAMPLE_ID'
+    mm = mod_df[[i]]
+    is_axis = grepl('AXIS', names(mm)) %>% 
+      names(mm)[.]
+    tt = merge(tt, mm[, c(merge_by, is_axis, contrast[i])], by=merge_by, all=TRUE)
+  }
+}
+mod_df = tt
+```
+
+
+##### SEM
+Here are the combined SEM results
+```{r}
+mod_df %<>% na.omit
+axis_name = paste0('AXIS_', barcode)
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + a*CONTRAST1 + b*CONTRAST2
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  direct := a + b
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_full = {
+  "
+  # Model
+  AV_DW ~ YEAR + a*CONTRAST1 + b*CONTRAST2 + e*AXIS1_CONTRAST1 + f*AXIS2_CONTRAST2
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  direct := a + b
+  indirect_CONTRAST1 := c*e
+  indirect_CONTRAST2 := d*f
+  total_CONTRAST1 := a + (c*e)
+  total_CONTRAST2 := b + (d*f)
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_full = {
+  "
+  # Model
+  AV_DW ~ YEAR + e*AXIS1_CONTRAST1 + f*AXIS2_CONTRAST2
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  #direct := a + b
+  indirect_CONTRAST1 := c*e
+  indirect_CONTRAST2 := d*f
+  #total_CONTRAST1 := a + (c*e)
+  #total_CONTRAST2 := b + (d*f)
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_follow_full_length = {
+  "
+  # Model
+  AV_DW ~ YEAR + a*CONTRAST1 + e*AXIS1_CONTRAST1 + f*AXIS2_CONTRAST2
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  direct := a#
+  indirect_CONTRAST1 := c*e
+  indirect_CONTRAST2 := d*f
+  total_CONTRAST1 := a + (c*e)
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_follow_partial_length = {
+  "
+  # Model
+  AV_DW ~ YEAR + b*CONTRAST2 + e*AXIS1_CONTRAST1 + f*AXIS2_CONTRAST2
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  direct := b
+  indirect_CONTRAST1 := c*e
+  indirect_CONTRAST2 := d*f
+  total_CONTRAST2 := b + (d*f)
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_follow_none_length = {
+  "
+  # Model
+  AV_DW ~ YEAR + b*CONTRAST2 + e*AXIS1_CONTRAST1
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  direct := b
+  indirect_CONTRAST1 := c*e
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_follow_only = {
+  "
+  # Model
+  AV_DW ~ YEAR + e*AXIS1_CONTRAST1
+  AXIS1_CONTRAST1 ~ c*CONTRAST1
+  AXIS2_CONTRAST2 ~ d*CONTRAST2
+  
+  # covariances
+  AXIS1_CONTRAST1 + AXIS2_CONTRAST2 ~~ 0*AV_DW
+  AXIS1_CONTRAST1 ~~ AXIS2_CONTRAST2
+  
+  # Calculate pathways for easy interpretation
+  indirect_CONTRAST1 := c*e
+  "
+} %>% 
+  gsub('CONTRAST1', contrast[1], .) %>% 
+  gsub('CONTRAST2', contrast[2], .) %>% 
+  gsub('AXIS1', axis_name[1], .) %>% 
+  gsub('AXIS2', axis_name[2], .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(full_follow_partial_length, partial_follow_full_length, full_mediation_full, partial_mediation_full, no_mediation, full_follow_none_length, full_follow_only) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+if (length(sem_name) > 1) sem_name = paste(crop, sampling, paste(unique(barcode), collapse='_'), 'COMBINED', sep='_')
+sem_ls[[sem_name]] = list(full_follow_partial_length = full_follow_partial_length,
+                          partial_follow_full_length = full_follow_partial_length, 
+                          full_mediation_full = full_follow_partial_length, 
+                          partial_mediation_full = full_follow_partial_length, 
+                          no_mediation = full_follow_partial_length, 
+                          full_follow_none_length = full_follow_partial_length, 
+                          full_follow_only = full_follow_partial_length,
+                          df = mod_df)
+```
+
+The best model is:
+```{r cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+
+With a poor model fit:
+```{r cache=FALSE}
+anova(get(keep_mod))
+```
+So we will use just the FOLLOW_SOY model. 
+
+##### Plot
+```{r cache=FALSE}
+select_barcode = 'ITS'
+#' plot response ~ barcode_axis based on data in mod_df created above.
+#' add shapes for partial and colors for constraint
+#' response is optionally the residuals of response ~ partial.
+#' returns a ggplot object for easy post-hoc formatting
+
+nn = keep_mod
+pp = c(partial, 'ROTATION_LENGTH')
+plot_effect(select_barcode, response, pp, constraint, contrast[1], mod_df, partial_response=TRUE, nn)
+```
+
+
+## Flowering
+### Rotation
+
+First we see if these communities respond to the treatment.
+
+#### Bacteria
+```{r}
+crop = 'corn'
+sampling = 'flowering'
+constraint = 'ROTATION'
+partial = 'YEAR'
+barcode = '16S'
+contrast = 'None'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test contrasts with the `r barcode` dataset.
+
+#### Fungi
+```{r}
+barcode = 'ITS'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test contrasts with the `r barcode` dataset.
+
+### Contrasts
+#### Rotation Length
+##### Bacteria
+```{r}
+contrast = 'ROTATION_LENGTH'
+barcode = '16S'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r contrast` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). We will investigate taxa. 
+
+##### Fungi
+```{r}
+barcode = 'ITS'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r contrast` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`. This is a strong (*p* = `r signif(perms$results$model_F['p_val'], 2)`) effect. We will investigate taxa. 
+
+#### Predictive Community
+```{r}
+find_ords = c(crop, sampling, contrast) %>% 
+  sapply(grepl, names(ord_ls)) %>% 
+  apply(1, all)
+local_ords = ord_ls[find_ords] %>% 
+  lapply(extract2, 'observed')
+
+sem_name = paste(crop, sampling, contrast, sep='_')
+mod_df = generate_prediction_df(local_ords, 
+                                crop, 
+                                sampling, 
+                                contrasts[[crop]][contrast, , drop=FALSE], 
+                                partial, 
+                                constraint, 
+                                response, 
+                                plot,
+                                auto_invert=TRUE)  # if contrast and axis are negatively correlated, for consistency.
+# Add T1 biomass
+seed_bio = subset(plot, SAMPLING=='seedling' & CROP=='corn', select=c('SAMPLE_ID', 'AV_DW'))
+colnames(seed_bio)[2] = 'T1_AV_DW'
+seed_bio$SAMPLE_ID %<>% as.character %>% 
+  strsplit('_') %>% 
+  sapply(function(x) paste(x[1:3], collapse='_'))
+mod_df$SID = mod_df$SAMPLE_ID %>% 
+  as.character %>% 
+  strsplit('_') %>% 
+  sapply(function(x) paste(x[1:3], collapse='_'))
+
+mod_df %<>% merge(seed_bio, by.x='SID', by.y='SAMPLE_ID')
+
+head(mod_df)
+```
+
+The SEM models are:
+
+- `no_mediation`: A null model where `r response` responds only to `r contrast`
+- `partial_mediation`: A full model where `r response` responds to both `r contrast` and the community
+- `full_mediation`: An intermediate model where `r response` responds only to the community
+
+In all models, `r partial` is included as a predictor of `r response`, as well.
+```{r}
+mod_df %<>% na.omit
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ 0*AV_DW
+  AXIS_16S ~~ 0*AV_DW
+  AXIS_ITS ~~ 0*AXIS_16S
+  
+  # Calculate pathways for easy interpretation
+  direct := c
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_full = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + e*AXIS_16S + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  #AXIS_ITS ~~ AXIS_16S
+    
+  direct := c
+  total := c + (a*b) + (d*e)
+  indirect_its := a*b
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_16S = {
+  "
+  AV_DW ~ YEAR + e*AXIS_16S + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ 0*AV_DW
+    
+  direct := c
+  total := c + (d*e)
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  AXIS_16S ~~ 0*AV_DW
+    
+  direct := c
+  total := c + (a*b)
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_full = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + e*AXIS_16S + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  #AXIS_ITS ~~ AXIS_16S
+  
+  indirect_its := a*b
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_16S = {
+  "
+  AV_DW ~ YEAR + e*AXIS_16S + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  #AXIS_ITS ~~ AXIS_16S
+  AXIS_ITS ~~ 0*AV_DW
+  
+  indirect_16s := d*e
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_16S ~ d*CONTRAST
+  
+  # covariances
+  #AXIS_ITS ~~ AXIS_16S
+  AXIS_16S ~~ 0*AV_DW
+  
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_mediation, partial_mediation_full, partial_mediation_16S, partial_mediation_ITS, full_mediation_full, full_mediation_16S, full_mediation_ITS) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_mediation = no_mediation, 
+                          partial_mediation_ITS = partial_mediation_ITS, 
+                          partial_mediation_16S = partial_mediation_16S, 
+                          full_mediation_ITS = full_mediation_ITS, 
+                          full_mediation_16S = full_mediation_16S, 
+                          full_mediation_full = full_mediation_full,
+                          df = mod_df)
+```
+The best model is `r keep_mod`. ITS models are the worst - worse than no_mediation. 
+
+```{r cache=FALSE}
+mod_summ = summary(get(keep_mod), std=TRUE)
+```
+
+```{r fig.height=3, fig.width=4, cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+
+
+##### Plot
+```{r fig.width=4, fig.height=3, cache=FALSE}
+select_barcode = '16S'
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_effect(select_barcode, response, partial, constraint, contrast, mod_df, partial_response=TRUE, nn)
+```
+
+
+##### Candidate Taxa
+The taxa that load most credibly onto this axis are:
+```{r}
+select_barcode = '16S'
+
+is_ITS = select_barcode=='ITS'
+if (is_ITS) {
+  depth = 'Species'
+  guilds = funguild
+} else {
+  depth = 'Genus'
+  guilds = NULL
+}
+
+ord_obj = paste(crop, sampling, select_barcode, contrast, sep='_') %>% 
+  ord_ls[[.]]
+
+top_tax = id_top_tax(ord_obj,
+                     phylo_obj[[select_barcode]], 
+                     metric='feature_F',
+                     phylo_depth=depth, 
+                     max_p_adj=1,
+                     max_p_val=1,
+                     guilds=NULL,
+                     auto_invert=TRUE) %>% 
+  subset(pcAxis1^2 > 0.01)
+tt_sort = order(top_tax$pcAxis1, decreasing=TRUE)
+# subset(top_tax[tt_sort, ], pcAxis1^2 > 0.005)
+# top_tax[tt_sort, ]
+# tt_sort = order(top_tax$pcAxis1, decreasing=TRUE)
+# top_tax %<>% .[tt_sort, ] %T>% print# %>% 
+  # subset(pcAxis1^2 > 0.005) %T>% 
+  # print
+# subset(top_tax[tt_sort, ], p_val < 0.05)
+```
+
+```{r cache=FALSE}
+taxa_results %<>% update_taxa_results(crop, sampling, select_barcode, contrast, top_tax[tt_sort, ])
+```
+
+## Combined - Update manually
+Full model predicting yield based on above results.
+
+Approach:
+
+1. Combine dataframes with yield
+2. Compare the no-microbe model with the full-microbe model
+
+```{r}
+sem_name = 'corn_combined'
+
+models = c('corn_seedling_FOLLOW_SOY', 
+           'corn_flowering_ROTATION_LENGTH')
+
+
+
+plot_sub = c('SAMPLE_ID', 'PLOT', 'YEAR', 'CROP', 'CROPYIELD') %>% 
+  plot[, .] %>% 
+  subset(!is.na(CROPYIELD))
+plot_sub$SID = with(plot_sub, paste(CROP, YEAR, PLOT, sep='_'))
+
+seed = sem_ls[[models[1]]]$df %>% 
+  extract(c('SAMPLE_ID', 'AXIS_ITS', 'FOLLOW_SOY'))
+colnames(seed)[c(2,3)] %<>% paste('T1', ., sep='_')
+seed$SID = seed$SAMPLE_ID %>% 
+  as.character %>% 
+  strsplit('_') %>% 
+  lapply(extract, 1:3) %>% 
+  lapply(paste, collapse='_')
+seed$SAMPLE_ID = NULL
+
+
+flow = sem_ls[[models[2]]]$df %>% 
+  extract(c('SID', 'AXIS_16S', 'ROTATION_LENGTH', 'AV_DW', 'T1_AV_DW'))
+colnames(flow)[c(2:4)] %<>% paste('T2', ., sep='_')
+
+mod_df = merge(plot_sub, seed, by='SID') %>% 
+  merge(flow, by='SID')
+
+is_numeric = sapply(mod_df, is.numeric)
+mod_df[is_numeric] %<>% scale
+
+```
+CHECKHERE
+```{r}
+mod_df %<>% na.omit
+no_microbe = {
+  "
+  CROPYIELD ~ YEAR + T2_AV_DW + T2_ROTATION_LENGTH
+  T2_AV_DW ~ YEAR + T2_ROTATION_LENGTH + T1_AV_DW
+  T1_AV_DW ~ YEAR + T1_FOLLOW_SOY
+  
+  T2_AXIS_16S ~ T2_ROTATION_LENGTH
+  T1_AXIS_ITS ~ T1_FOLLOW_SOY
+  "
+} %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_microbe = {
+  "
+  CROPYIELD ~ YEAR + a*T2_AV_DW + T2_ROTATION_LENGTH
+  T2_AV_DW ~ YEAR + b*T1_AV_DW + c*T2_AXIS_16S 
+  T1_AV_DW ~ YEAR + d*T1_AXIS_ITS
+  
+  T2_AXIS_16S ~ T2_ROTATION_LENGTH
+  T1_AXIS_ITS ~ T1_FOLLOW_SOY
+  
+  # microbe paths
+  t1_microbe := a*b*d
+  t2_microbe := a*c
+  "
+} %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+biomass_only = {
+  "
+  CROPYIELD ~ YEAR + T2_AV_DW
+  T2_AV_DW ~ YEAR + T1_AV_DW
+  "
+} %>%
+  sem(mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_microbe, full_microbe) %T>% print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_microbe = no_microbe,
+                          full_microbe = full_microbe,
+                          df = mod_df)
+
+```
+
+`r keep_mod` is the best, by `r signif(diff(model_compares$AIC), 4)` AIC units. 
+
+```{r cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE, stand=TRUE)
+```
+
+
+
+```{r cache=FALSE}
+summary(full_microbe, std=TRUE)
+```
+
+
+# Soy
+Continuing on to soybean...
+
+As with univariate tests, we'll first test whether our response, the microbial community, responds to the overall treatments. If so, we will test the contrasts that were also predictive of plant health (biomass). The dataset will be reduced to those taxa responding to the contrast. Output will be the same as for corn.
+
+First we see if these communities respond to the treatment.
+
+## Seedling
+### Rotation
+#### Bacteria
+```{r}
+crop = 'soy'
+sampling = 'seedling'
+constraint = 'ROTATION'
+partial = 'YEAR'
+barcode = '16S'
+contrast = 'None'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test not contrasts with the `r barcode` dataset.
+
+#### Fungi
+```{r}
+barcode = 'ITS'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test contrasts with the `r barcode` dataset.
+
+
+### Contrasts
+#### Follow Corn
+##### Bacteria
+For compatibility with downstream code
+```{r}
+contrast = 'FOLLOW_CORN'
+barcode = '16S'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+The contrast has a negative score, so we will invert it. 
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did not respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`), as expected based on full rotation/treatment results. We will not test it further or reduce features. We'll just save the scores for plotting.
+
+##### Fungi
+```{r}
+contrast = 'FOLLOW_CORN'
+barcode = 'ITS'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+The contrast has a negative score, so we will invert it. 
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did  respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`). We will see if these communities predict `r crop` biomass.
+
+##### Predictive Communities
+Here are the axis scores so far. Note we will NOT include 16S in the model.
+```{r}
+find_ords = c(crop, sampling, contrast) %>% 
+  sapply(grepl, names(ord_ls)) %>% 
+  apply(1, all)
+local_ords = ord_ls[find_ords] %>% 
+  lapply(extract2, 'observed')
+
+sem_name = paste(crop, sampling, contrast, sep='_')
+
+#' combine axis (standard) scores plus response, contrast, and partial data into a single data.frame for modeling.
+#' contrast_row is the row of contrasts[[crop]]. Must be a matrix.
+mod_df = generate_prediction_df(local_ords, 
+                                crop, 
+                                sampling, 
+                                contrasts[[crop]][contrast,,drop=FALSE], 
+                                partial, 
+                                constraint, 
+                                response, 
+                                plot,
+                                auto_invert=TRUE)  # if contrast and axis are negatively correlated, for consistency.
+head(mod_df)
+```
+
+Models are as previously described.
+```{r}
+mod_df %<>% na.omit
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  AXIS_ITS ~~ 0*AV_DW
+  # Calculate pathways for easy interpretation
+  direct := c
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  
+  direct := c
+  total := c + (a*b)
+  indirect := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS# + c*CONTRAST
+  AXIS_ITS ~ a*CONTRAST
+  
+  # direct := c
+  # total := c + (a*b)
+  indirect := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_mediation, partial_mediation_ITS, full_mediation_ITS) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_mediation = no_mediation, 
+                          partial_mediation_ITS = partial_mediation_ITS, 
+                          full_mediation_ITS = full_mediation_ITS, 
+                          df = mod_df)
+
+```
+The best model is `r keep_mod`.
+
+```{r cache=FALSE}
+mod_summ = summary(get(keep_mod), std=TRUE)
+```
+This is an excellent model. 
+
+```{r fig.height=3, fig.width=4, cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+
+
+###### Plot
+```{r fig.width=4, fig.height=3, cache=FALSE}
+select_barcode = 'ITS'
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_effect(select_barcode, response, partial, constraint, contrast, mod_df, partial_response=TRUE, nn)
+```
+
+
+###### Candidate Taxa
+The taxa that load most credibly onto this axis are:
+```{r}
+select_barcode = 'ITS'
+
+is_ITS = select_barcode=='ITS'
+if (is_ITS) {
+  depth = 'Species'
+  guilds = funguild
+} else {
+  depth = 'Genus'
+  guilds = NULL
+}
+
+ord_obj = paste(crop, sampling, select_barcode, contrast, sep='_') %>% 
+  ord_ls[[.]]
+
+top_tax = id_top_tax(ord_obj,
+                     phylo_obj[[select_barcode]], 
+                     metric='feature_F',
+                     phylo_depth=depth, 
+                     max_p_adj=1,
+                     max_p_val=1,
+                     guilds=funguild,
+                     auto_invert=TRUE) %>% 
+  subset(pcAxis1^2 > 0.01)
+tt_sort = order(top_tax$pcAxis1, decreasing=TRUE)
+  
+```
+
+```{r cache=FALSE}
+taxa_results %<>% update_taxa_results(crop, sampling, select_barcode, contrast, top_tax[tt_sort, ])
+```
+Quite the mix of taxa here. 
+
+
+## Flowering
+### Rotation
+#### Bacteria
+```{r}
+crop = 'soy'
+sampling = 'flowering'
+constraint = 'ROTATION'
+partial = 'YEAR'
+barcode = '16S'
+contrast = 'None'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will not test contrasts with the `r barcode` dataset.
+
+#### Fungi
+```{r}
+barcode = 'ITS'
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+plot_name = paste(crop, sampling, barcode, '\npartial, constrained')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name) 
+perms = permute_ord(ord, metric='model_F', times=nperms, permute_on='partial')
+```
+
+```{r cache=FALSE}
+full_ord_results %<>% update_full_ord_results(crop, sampling, barcode, perms)
+ord_ls[[nn]] = perms  # structure includes: permutation results, observed data (pcwOrd object).
+```
+`r constraint` explains `r signif(ord_variance(ord)$summary['pct_total', 'constrained'], 3)` of `r crop` `r barcode` community variation at `r sampling`  (*p* = `r signif(perms$results$model_F['p_val'], 2)`). Therefore, we will test contrasts with the `r barcode` dataset.
+
+### Contrasts
+#### Follow Corn
+##### Bacteria
+For compatibility with downstream code
+```{r}
+contrast = 'FOLLOW_CORN'
+barcode = '16S'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did not respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`), as expected based on full rotation/treatment results. We will not test it further or reduce features. We'll just save the scores for plotting.
+
+##### Fungi
+```{r}
+barcode = 'ITS'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+The contrast has a negative score, so we will invert it. 
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did  respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`). We will see if these communities predict `r crop` biomass.
+
+##### Predictive Communities
+Here are the axis scores so far. Note we will NOT include 16S in the model.
+```{r}
+find_ords = c(crop, sampling, contrast) %>% 
+  sapply(grepl, names(ord_ls)) %>% 
+  apply(1, all)
+local_ords = ord_ls[find_ords] %>% 
+  lapply(extract2, 'observed')
+
+sem_name = paste(crop, sampling, contrast, sep='_')
+mod_df = generate_prediction_df(local_ords, 
+                                crop, 
+                                sampling, 
+                                contrasts[[crop]][contrast,,drop=FALSE], 
+                                partial, 
+                                constraint, 
+                                response, 
+                                plot,
+                                auto_invert=TRUE)  # if contrast and axis are negatively correlated, for consistency.
+# Add T1 biomass
+seed_bio = subset(plot, SAMPLING=='seedling' & CROP==crop, select=c('SAMPLE_ID', 'AV_DW'))
+colnames(seed_bio)[2] = 'T1_AV_DW'
+seed_bio$SAMPLE_ID %<>% as.character %>% 
+  strsplit('_') %>% 
+  sapply(function(x) paste(x[1:3], collapse='_'))
+mod_df$SID = mod_df$SAMPLE_ID %>% 
+  as.character %>% 
+  strsplit('_') %>% 
+  sapply(function(x) paste(x[1:3], collapse='_'))
+
+mod_df %<>% merge(seed_bio, by.x='SID', by.y='SAMPLE_ID')
+
+head(mod_df)
+```
+
+The SEM models are as described above.
+```{r}
+mod_df %<>% na.omit
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ 0*AV_DW
+  
+  # Calculate pathways for easy interpretation
+  direct := c
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+    
+  direct := c
+  total := c + (a*b)
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+
+  # covariances
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_mediation, partial_mediation_ITS, full_mediation_ITS) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_mediation = no_mediation, 
+                          partial_mediation_ITS = partial_mediation_ITS, 
+                          full_mediation_ITS = full_mediation_ITS, 
+                          df = mod_df)
+
+```
+The best model is `r keep_mod`.
+
+```{r cache=FALSE}
+mod_summ = summary(get(keep_mod), std=TRUE)
+```
+This is an poor model. 
+
+```{r fig.height=3, fig.width=4, cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+Fungi did not mediate the effect of `r contrast` on `r crop` biomass at `r sampling`. 
+
+
+#### Rotation Length
+##### Bacteria
+For compatibility with downstream code
+```{r}
+contrast = 'ROTATION_LENGTH'
+barcode = '16S'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+The contrast has a negative score, so we will invert it. 
+```{r}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did not respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`), as expected based on full rotation/treatment results. We will not test it further or reduce features. We'll just save the scores for plotting.
+
+##### Fungi
+```{r}
+barcode = 'ITS'
+
+contr = contrasts[[crop]][contrast, , drop=FALSE]
+plot_name = paste(crop, sampling, barcode, contrast, '\npartial, constrained')
+
+nn = paste(crop, sampling, barcode, contrast, sep='_')
+ord = ordinate(phylo_obj[[barcode]], crop, sampling, constraint, partial, plot_name, contr) 
+perms = permute_ord(ord, metric=c('model_F', 'feature_F', 'feature_scores'), axes=1, times=nperms)
+```
+The contrast has a negative score, so we will invert it. 
+
+```{r cache=FALSE}
+contrast_ord_results %<>% update_contrast_ord_results(crop, sampling, barcode, contrast, perms)
+ord_ls[[nn]] = perms
+```
+`r crop; barcode` communities did not respond to `r constraint` at `r sampling` (*p* = `r signif(perms$results$model_F['p_val'], 2)`). We will see if these communities predict `r crop` biomass.
+
+
+##### Predictive Communities
+Here are the axis scores so far. Note we will NOT include 16S in the model.
+```{r}
+find_ords = c(crop, sampling, contrast) %>% 
+  sapply(grepl, names(ord_ls)) %>% 
+  apply(1, all)
+local_ords = ord_ls[find_ords] %>% 
+  lapply(extract2, 'observed')
+
+sem_name = paste(crop, sampling, contrast, sep='_')
+mod_df = generate_prediction_df(local_ords, 
+                                crop, 
+                                sampling, 
+                                contrasts[[crop]][contrast,,drop=FALSE], 
+                                partial, 
+                                constraint, 
+                                response, 
+                                plot,
+                                auto_invert=TRUE)  # if contrast and axis are negatively correlated, for consistency.
+# Add T1 biomass
+seed_bio = subset(plot, SAMPLING=='seedling' & CROP==crop, select=c('SAMPLE_ID', 'AV_DW'))
+colnames(seed_bio)[2] = 'T1_AV_DW'
+seed_bio$SAMPLE_ID %<>% as.character %>% 
+  strsplit('_') %>% 
+  sapply(function(x) paste(x[1:3], collapse='_'))
+mod_df$SID = mod_df$SAMPLE_ID %>% 
+  as.character %>% 
+  strsplit('_') %>% 
+  sapply(function(x) paste(x[1:3], collapse='_'))
+
+mod_df %<>% merge(seed_bio, by.x='SID', by.y='SAMPLE_ID')
+
+head(mod_df)
+```
+
+The SEM models are as described above.
+```{r}
+mod_df %<>% na.omit
+no_mediation = {
+  "
+  # Model
+  AV_DW ~ YEAR + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+  
+  # covariances
+  AXIS_ITS ~~ 0*AV_DW
+  
+  # Calculate pathways for easy interpretation
+  direct := c
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+partial_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + c*CONTRAST + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+    
+  direct := c
+  total := c + (a*b)
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_mediation_ITS = {
+  "
+  AV_DW ~ YEAR + b*AXIS_ITS + T1_AV_DW
+  AXIS_ITS ~ a*CONTRAST
+
+  # covariances
+  indirect_its := a*b
+  "
+} %>% 
+  gsub('CONTRAST', contrast, .) %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_mediation, partial_mediation_ITS, full_mediation_ITS) %T>%
+  print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_mediation = no_mediation, 
+                          partial_mediation_ITS = partial_mediation_ITS, 
+                          full_mediation_ITS = full_mediation_ITS, 
+                          df = mod_df)
+
+```
+The best model is `r keep_mod`.
+
+```{r cache=FALSE}
+mod_summ = summary(get(keep_mod), std=TRUE)
+```
+This is a good model. 
+
+```{r fig.height=3, fig.width=4, cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE)
+```
+Fungi did not mediate the effect of `r contrast` on `r crop` biomass at `r sampling`. 
+
+
+## Combined - Update manually
+Full model predicting yield based on above results.
+
+Approach:
+
+1. Combine dataframes with yield
+2. Compare the no-microbe model with the full-microbe model
+
+```{r}
+sem_name = 'soy_combined'
+
+models = c('soy_seedling_FOLLOW_CORN',
+           'soy_flowering_ROTATION_LENGTH')
+
+plot_sub = c('SAMPLE_ID', 'PLOT', 'YEAR', 'CROP', 'CROPYIELD') %>% 
+  plot[, .] %>% 
+  subset(!is.na(CROPYIELD))
+plot_sub$SID = with(plot_sub, paste(CROP, YEAR, PLOT, sep='_'))
+
+seed = sem_ls[[models[1]]]$df %>% 
+  extract(c('SAMPLE_ID', 'AXIS_ITS', 'FOLLOW_CORN'))
+colnames(seed)[c(2,3)] %<>% paste('T1', ., sep='_')
+seed$SID = seed$SAMPLE_ID %>% 
+  as.character %>% 
+  strsplit('_') %>% 
+  lapply(extract, 1:3) %>% 
+  lapply(paste, collapse='_')
+seed$SAMPLE_ID = NULL
+
+
+flow = sem_ls[[models[2]]]$df %>% 
+  extract(c('SID', 'ROTATION_LENGTH', 'AV_DW', 'T1_AV_DW'))
+colnames(flow)[c(2, 3)] %<>% paste('T2', ., sep='_')
+
+mod_df = merge(plot_sub, seed, by='SID') %>% 
+  merge(flow, by='SID')
+```
+
+```{r}
+mod_df %<>% na.omit
+no_microbe = {
+  "
+  CROPYIELD ~ YEAR + T2_AV_DW# + T2_ROTATION_LENGTH + T1_FOLLOW_CORN
+  T2_AV_DW ~ YEAR + T2_ROTATION_LENGTH + T1_AV_DW + T1_FOLLOW_CORN
+  T1_AV_DW ~ YEAR + T1_FOLLOW_CORN
+  
+  T1_AXIS_ITS ~ T1_FOLLOW_CORN
+  "
+} %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+full_microbe = {
+  "
+  CROPYIELD ~ YEAR + a*T2_AV_DW# + T2_ROTATION_LENGTH + T1_FOLLOW_CORN
+  T2_AV_DW ~ YEAR + T2_ROTATION_LENGTH + b*T1_AV_DW + T1_FOLLOW_CORN
+  T1_AV_DW ~ YEAR + d*T1_AXIS_ITS
+  
+  T1_AXIS_ITS ~ T1_FOLLOW_CORN
+  
+  # microbe paths
+  t1_microbe := a*b*d
+  "
+} %>% 
+  sem(data=mod_df, se=sem_error, std.ov=TRUE, missing='ML')
+
+model_compares = anova(no_microbe, full_microbe) %T>% print
+
+keep_mod = which.min(model_compares$AIC) %>% 
+  rownames(model_compares)[.]
+
+```
+
+```{r cache=FALSE}
+sem_ls[[sem_name]] = list(no_microbe = no_microbe,
+                          full_microbe = full_microbe,
+                          df = mod_df)
+
+```
+
+`r keep_mod` is the best, by `r signif(diff(model_compares$AIC), 4)` AIC units. 
+
+```{r cache=FALSE}
+lavaanPlot(model=get(keep_mod), coefs=TRUE, stand=TRUE)
+```
+
+
+```{r cache=FALSE}
+summary(full_microbe, std=TRUE)
+```
+
+
+
+# Overall
+In both corn and soybean, we see the following pattern:
+
+At the seedling stage, the effect of the previous crop is strong. Soybean growing after corn, and corn growing after soybean, has lowerbiomass than if growing after alternate crops. The fungal community fully explains the previous crop effect. The fungal taxa that are encouraged by corn/soybean as the previous crop tend to be pathogens, suggesting they are suppressing the current crop's growth.
+
+At the flowering stage, the effect of rotation length dominates, with crops growing in long rotations having higher biomass. The microbial community again fully explains the rotation length effect, at least for corn - bacteria is slightly better than fungi in the case of corn. Soybean show mild evidence of the fungal community partially mediation rotation length (slightly lower *χ*<sup>2</sup>), but this is not as parsimonious as the no-mediation model. 
+
+## Export Results
+To save:
+1. Ordination data (with permutations)
+2. SEM models and data.frames
+3. list of predictive taxa
+```{r cache=FALSE}
+# print('update')
+out_obj = 'Microbes as Mechanism Results.Rdata'
+
+save(full_ord_results, contrast_ord_results, taxa_results, ord_ls, sem_ls,
+     file=here('Data', out_obj))
+```

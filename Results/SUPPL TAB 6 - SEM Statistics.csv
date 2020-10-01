@@ -1,0 +1,29 @@
+"Crop","Sampling","Contrast","Mediation by ITS","Mediation by 16S","Selected","Log-likelihood","Parameters","Observations","AIC","BIC","Chi-squared","Deg freedom","p value"
+"corn","combined","--","None","None","",-135.2,23,38,316.39,354.06,34.262,12,0.001
+"corn","combined","--","Full, Seedling","Full, Flowering","*",-130.78,20,38,301.56,334.31,25.428,15,0.044
+"corn","flowering","rotation length","None","None","",-99.23,11,38,220.47,238.48,7.238,7,0.405
+"corn","flowering","rotation length","Partial","None","",-99.23,12,38,222.46,242.11,7.233,6,0.3
+"corn","flowering","rotation length","None","Partial","",-96.95,12,38,217.89,237.54,2.664,6,0.85
+"corn","flowering","rotation length","Full","None","",-100.25,11,38,222.5,240.51,9.267,7,0.234
+"corn","flowering","rotation length","None","Full","*",-96.95,11,38,215.9,233.92,2.676,7,0.913
+"corn","flowering","rotation length","Full","Full","",-96.88,12,38,217.77,237.42,2.537,6,0.864
+"corn","seedling","follow soy","None","--","",-74.8,7,40,163.6,175.42,15.158,2,0.001
+"corn","seedling","follow soy","Partial","--","",-67.22,8,40,150.44,163.96,0.005,1,0.944
+"corn","seedling","follow soy","Full","--","*",-67.42,7,40,148.84,160.66,0.398,2,0.82
+"corn","seedling","rotation length","None","None","",-98.51,11,40,219.01,237.59,1.624,4,0.805
+"corn","seedling","rotation length","Partial","None","",-97.84,12,40,219.67,239.94,0.287,3,0.962
+"corn","seedling","rotation length","None","Partial","",-98.37,12,40,220.73,241,1.348,3,0.718
+"corn","seedling","rotation length","Full","None","*",-98.49,11,40,218.98,237.55,1.589,4,0.811
+"corn","seedling","rotation length","None","Full","",-98.91,11,40,219.82,238.4,2.434,4,0.657
+"corn","seedling","rotation length","Full","Full","",-97.76,12,40,219.51,239.78,0.124,3,0.989
+"soy","combined","--","None","--","",-117.41,18,38,270.82,300.29,12.271,8,0.14
+"soy","combined","--","Full, Seedling","--","*",-115.47,17,38,264.94,292.78,8.389,9,0.495
+"soy","flowering","follow corn","None","--","*",-77.8,8,38,171.6,184.7,7.157,3,0.067
+"soy","flowering","follow corn","Partial","--","",-77.78,9,38,173.55,188.29,7.106,2,0.029
+"soy","flowering","follow corn","Full","--","",-83.58,8,38,183.16,196.26,18.712,3,0
+"soy","flowering","rotation length","None","--","*",-82.15,8,38,180.31,193.41,5.16,3,0.16
+"soy","flowering","rotation length","Partial","--","",-81.89,9,38,181.79,196.53,4.638,2,0.098
+"soy","flowering","rotation length","Full","--","",-82.71,8,38,181.43,194.53,6.277,3,0.099
+"soy","seedling","follow corn","None","--","",-77.03,7,39,168.07,179.71,3.681,2,0.159
+"soy","seedling","follow corn","Partial","--","",-75.3,8,39,166.61,179.92,0.225,1,0.636
+"soy","seedling","follow corn","Full","--","*",-75.49,7,39,164.99,176.63,0.602,2,0.74
