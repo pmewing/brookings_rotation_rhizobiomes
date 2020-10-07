@@ -14,7 +14,6 @@ To view the unpolished results of the analysis without running, simply open the 
 The repository is an [RStudio](https://rstudio.com/) project. Dependencies (e.g. [`lavaan`](https://lavaan.ugent.be/)) *should* be pretty well managed with [packrat](https://rstudio.github.io/packrat/), and are in any case noted in the scripts (and will be auto-installed by many of scripts, as well, though maybe using a newer version). Therefore, once you've downloaded the repository, open the brookings\_rotation\_microbiome.Rproj file in RStudio. Then open the analysis files as desired. These are housed in ./Scripts. 
 
 ## File Structure
-
 - "./Data" has the raw and wrangled data. It also has a number of .Rdata files, which contain results from the analysis and are accessed by the figure- and table-generating scripts.
 - "./Results" has all figures and (unformatted) tables. It also has Rmarkdown notebooks.
 - "./Scripts" are all scripts for running the analysis. Within this are a few files and folders:
@@ -25,7 +24,6 @@ The repository is an [RStudio](https://rstudio.com/) project. Dependencies (e.g.
 	- "./Part 2 - Helper Functions.R" similarly has a number of helper functions for Part 2, plus some that might not be used.
 	- "./*.Rmd" are the Rmarkdown notebooks in which the analyses were run. 
 - "packrat" contains the R libraries/versions used. 
-
 
 ## Analysis Steps:
 1. Open "./brookings\_rotation\_microbiome.Rproj" in Rstudio. This will set your home directory and give access to the dependencies.

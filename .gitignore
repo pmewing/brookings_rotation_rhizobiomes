@@ -1,0 +1,8 @@
+packrat/lib*/
+.R*
+Results/__MAC*/
+.Rproj.user
+*.pptx
+*_cache
+Results/Microbial-from-Treatment_files/*
+FUNGuild
