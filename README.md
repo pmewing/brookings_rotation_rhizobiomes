@@ -1,10 +1,10 @@
 # Rhizosphere microbial communities explain positive effects of diverse crop rotations on corn and soybean performance
 
-Updated Oct 1st, 2020
+Updated June 1st, 2021
 
 Use this repository reproduce the analysis in:
 
-Benitez-Ponce, M.S. et al, *in review*, Rhizosphere microbial communities explain positive effects of diverse crop rotations on corn and soybean performance. 
+Benitez-Ponce, M.S. et al, 2021, Rhizosphere microbial communities explain positive effects of diverse crop rotations on corn and soybean performance. **Soil Biology and Biochemistry** 159, 108309. DOI:[10.1016/j.soilbio.2021.108309](https://doi.org/10.1016/j.soilbio.2021.108309) 
 
 ## Usage
 First, either `git clone` or download the repository and extract it to a folder of your choosing.
