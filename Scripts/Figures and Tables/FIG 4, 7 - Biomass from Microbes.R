@@ -1,11 +1,19 @@
-library(here)
-library(ggplot2)
-library(ggpmisc) # annotate regressions
-library(data.table)
-library(magrittr)
-library(grid)
-library(gridExtra)
-library(lavaan)
+libs = c('here',
+         'ggplot2',
+         'ggpmisc',
+         'data.table', 
+         'magrittr',
+         'grid',
+         'gridExtra',
+         'lavaan')
+
+for (i in libs) {
+  if (!(require(i, character.only=TRUE))) {
+    install.packages(i, Ncpu=4)
+    library(i, character.only=TRUE)
+  }
+}
+
 
 load_pcwOrd = function() {
   here('Scripts', 
@@ -56,22 +64,25 @@ name_parser = c(seedling = 'c) Seedling',
                      ITS = 'Fungal Community',
                      `16S` = 'Bacterial Community',
                      FOLLOW_SOY = 'a Soybean Legacy',
-                     FOLLOW_CORN = 'a Corn Legacy',
-                     ROTATION_LENGTH = 'a Two Species Rotation')
+                     FOLLOW_CORN = 'a Maize Legacy',
+                     ROTATION_LENGTH = 'a Four Species Rotation')
 
 # for the title of each figure (group of plots). Names are crop specified in names(ord_ls).
 crop_name = c(corn = 'Corn',
               soy = 'Soybean')
 
 # for saving. Names are specified in names(ord_ls)
-figure_filename = c(corn = 'FIG 3 - Corn Biomass from Microbes.jpeg',
-                    soy = 'FIG 6 - Soybean Biomass from Microbes.jpeg')
+figure_filename = c(corn = 'FIG 4 - Corn Biomass from Microbes.jpeg',
+                    soy = 'FIG 7 - Soybean Biomass from Microbes.jpeg')
 
 save = FALSE
 save = TRUE
 
 
-plot_axis_effect = function(barcode, response, partial, constraint, contrast, data, partial_response=TRUE, title, palette=NULL) {
+plot_axis_effect = function(barcode, response, partial, constraint, contrast, data, partial_response=TRUE, title, palette=NULL,
+                            autoflip_x=TRUE) {
+  
+  label.x=0.9
   
   yax_name = expression(paste('Biomass [g plant' ^-1, ']', sep=''))
   xax_name = name_parser[barcode] %>% 
@@ -89,6 +100,19 @@ plot_axis_effect = function(barcode, response, partial, constraint, contrast, da
       residuals
     yax_name = expression(paste('Marginal Biomass [g plant' ^-1, ']', sep=''))
   }
+
+  flip_x = contrast=='ROTATION_LENGTH'  # flip x axis for rotation length (or, make sure 2-year is negative)  
+  if (flip_x & autoflip_x) {
+    mean_CS = tapply(pltdf[, xax], pltdf$ROTATION, mean) %>% 
+      .['CS']
+    if (mean_CS > 0) {
+      pltdf[, xax] %<>% multiply_by(-1)
+      label.x=0.1
+      
+    }
+  }
+  
+  
   
   plt_out = 
     ggplot(pltdf, aes_string(x=xax,
@@ -115,12 +139,12 @@ plot_axis_effect = function(barcode, response, partial, constraint, contrast, da
                alpha=0.9) +
     stat_poly_eq(aes(label=stat(eq.label)),
                  formula=y~x,
-                 npcx = 0.9,
+                 npcx = label.x,
                  size=3,
                  parse=TRUE) +
     stat_poly_eq(aes(label=stat(rr.label)),
                  formula=y~x,
-                 npcx = 0.9,
+                 npcx = label.x,
                  npcy = 0.9,
                  size=3,
                  parse=TRUE) +

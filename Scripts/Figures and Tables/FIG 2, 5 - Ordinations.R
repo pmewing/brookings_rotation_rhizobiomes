@@ -7,12 +7,19 @@
 #   4. annotations: Rsq, p-value
 ####
 
-library(here)
-library(ggplot2)
-library(data.table)
-library(magrittr)
-library(grid)
-library(gridExtra)
+libs = c('here', 
+              'ggplot2',
+              'data.table',
+              'magrittr',
+              'grid',
+              'gridExtra')
+
+for (i in libs) {
+  if (!(require(i, character.only=TRUE))) {
+    install.packages(i, Ncpu=4) 
+    library(i, character.only=TRUE)
+  }
+}
 
 load_pcwOrd = function() {
   here('Scripts', 
@@ -48,6 +55,12 @@ name_parser = c(seedling = 'Seedling',
                 flowering = 'Flowering',
                 ITS = 'Fungi',
                 `16S` = 'Bacteria')
+letter_parser = list(
+  seedling = c(`16S` = 'a)',
+               ITS = 'b)'),
+  flowering = c(`16S` = 'c)',
+                ITS = 'd)')
+)
 
 # for the title of each figure (group of plots). Names are crop specified in names(ord_ls).
 crop_name = c(corn = 'Corn',
@@ -65,23 +78,23 @@ for (i in 1:2){
 title %<>% paste(letters[1:4], ., sep=') ')
 
 # for saving. Names are specified in names(ord_ls)
-figure_filename = c(corn = 'FIG 1 - Corn Ordinations.jpeg',
-                    soy = 'FIG 4 - Soybean Ordinations.jpeg')
+figure_filename = c(corn = 'FIG 2 - Corn Ordinations.jpeg',
+                    soy = 'FIG 5 - Soybean Ordinations.jpeg')
 
 #### Change below for different axes, etc ####
 
 
 # title for each sub-plot, given the name of the object in ord_ls
-generate_title = function(name, name_parser) {
+generate_title = function(name, name_parser, letter) {
   name %<>% as.character
-  nn = strsplit(name, '_')
-  out = name_parser[nn[[1]]]
-  out = out[!is.na(out)] %>%
-    paste(collapse=', ')
-  lets = length(out) %>% 
-    seq_len %>% 
-    letters[.]
-  out %<>% paste(letters, ., sep=') ')
+  nn = strsplit(name, '_')[[1]]
+  out = name_parser[nn] %>% 
+    na.omit
+  letter_id = names(out)
+  lets = letter_parser[[letter_id[1]]][letter_id[2]]
+  
+  out %<>% paste(collapse=', ') %>% 
+    paste(lets, .)
   return(out)
 }
 

@@ -1,6 +1,14 @@
-library(here)
-library(magrittr)
-library(reshape2)
+libs = c('here', 
+         'magrittr', 
+         'reshape2',
+         'lavaan')
+
+for (i in libs) {
+  if (!(require(i, character.only=TRUE))) {
+    install.packages(i, Ncpu=4)
+    library(i, character.only=TRUE)
+  }
+}
 
 
 load(here('Data', 
@@ -12,12 +20,24 @@ load(here('Data',
 load(here('Data',
           'Crop ANOVAs.Rdata'))
 
+load(here('Data',
+          'ASV_Table_Filtering.Rdata'))
+
 crop_contrast = read.csv(here('Results',
                               'Contrast Results CROP.csv'))
 
 taxa_results %<>% subset(!(CROP=='soy' & SAMPLING=='flowering'))
 
-# Table S2: Contrast Values of Treatments
+# Table S3 - Microbial Community Data
+here('Results', 'SUPPL TAB 3 - ASV Table Stats.txt') %>% 
+  sink
+cat('16S\n')
+filtering_results$bac
+cat('\nITS\n')
+filtering_results$fun
+sink()
+
+# Table S5: Contrast Values of Treatments
 contrasts %<>% 
   names %>% 
   lapply(function(x) {
@@ -50,11 +70,13 @@ contrasts[, 3:7] %<>%
   t %>% 
   round
 
-'SUPPL TAB 2 - Contrasts.csv' %>% 
+'SUPPL TAB 5 - Contrasts.csv' %>% 
   here('Results', .) %>% 
   write.csv(contrasts, ., row.names=FALSE)
 
-# Table S3 - PERMANOVA results
+
+
+# Table S6 - PERMANOVA results
 # all results are in ord_ls
 make_permanova = function(ord_ls) {
   permanova= sapply(ord_ls, function(x) x$results$model_F) %>%   # all permanove results
@@ -100,11 +122,11 @@ make_permanova = function(ord_ls) {
 }
 permanova_results = make_permanova(ord_ls)
 
-"SUPPL TAB 3 - PERMANOVA Results.csv" %>% 
+"SUPPL TAB 6 - PERMANOVA Results.csv" %>% 
   here('Results', .) %>% 
   write.csv(permanova_results, ., row.names=FALSE)
 
-# Table S4: Crop ANOVA Statistics
+# Table S7: Crop ANOVA Statistics
 names(crop_anova) %<>% 
   strsplit('_') %>% 
   lapply(function(x) {
@@ -117,7 +139,7 @@ names(crop_anova) %<>%
 reorder = sort(names(crop_anova))
 crop_anova %<>% .[reorder]
  
-'SUPPL TAB 4 - Crop ANOVA results.txt' %>% 
+'SUPPL TAB 7 - Crop ANOVA results.txt' %>% 
   here('Results', .) %>% 
   sink
 for (i in names(crop_anova)) {
@@ -128,7 +150,7 @@ for (i in names(crop_anova)) {
 }
 sink()
 
-# Table S5: Crop Contrast Results
+# Table S8: Crop Contrast Results
 crop_contrast$CONTRAST %<>% 
   gsub('_', ' ', .) %>% 
   tolower
@@ -156,26 +178,26 @@ reorder = with(crop_contrast, paste(Crop, Sampling, Contrast)) %>%
   order
 crop_contrast %<>% .[reorder, ]
 
-'SUPPL TAB 5 - Crop Contrast Results.csv' %>% 
+'SUPPL TAB 8 - Crop Contrast Results.csv' %>% 
   here('Results', .) %>% 
   write.csv(crop_contrast, ., row.names=FALSE)
 
-# Table S6: SEM Results
+# Table S10: SEM Results
+measures = c(`Log-likelihood` = 'logl',
+             Parameters = 'npar',
+             Observations = 'ntotal',
+             AIC = 'aic',
+             BIC = 'bic',
+             CFI = 'cfi',
+             `Chi-squared` = 'chisq',
+             `Deg freedom` = 'df',
+             `p value` = 'pvalue')
 sem_tests = lapply(sem_ls, function(x) {
   out = sapply(x, function(y) {
     if (class(y) == 'lavaan') {
-      vec = y@test$standard
-      subout = c(vec['stat'], vec['df'], vec['pvalue']) %>% 
-        set_names(c(vec['refdistr'], 'df', 'pvalue'))
-      vec2 = y@loglik %>% 
-        extract(c('loglik',
-                  'npar',
-                  'ntotal',
-                  'AIC',
-                  'BIC')) %>% 
-        unlist(recursive=FALSE)
-      subout = c(vec2, subout)
-      return(subout)
+      vec = fitmeasures(y, fit.measures=measures) %>% 
+        set_names(names(measures))
+      return(vec)
     }
   }) %>% 
     do.call(rbind, .) %>% 
@@ -198,8 +220,8 @@ sem_tests %<>%
   lapply(unlist) %>% 
   as.data.frame(stringsAsFactors=FALSE)
 
-sem_tests[, c('loglik', 'AIC', 'BIC')] %<>% lapply(function(x) as.numeric(x) %>% round(2))
-sem_tests[, c('chisq', 'pvalue')] %<>% lapply(function(x) as.numeric(x) %>% round(3))
+sem_tests[, c('Log.likelihood', 'AIC', 'BIC')] %<>% lapply(function(x) as.numeric(x) %>% round(2))
+sem_tests[, c('Chi.squared', 'p.value', 'CFI')] %<>% lapply(function(x) as.numeric(x) %>% round(3))
 
 sem_tests$crop = sem_tests$model_group %>% 
   as.character %>% 
@@ -267,27 +289,27 @@ sem_tests = apply(sem_tests[, c('crop', 'sampling', 'contrast')], 1, paste, coll
 
 keep_cols = c('crop', 'sampling', 'contrast', 'mediation.by.ITS', 'mediation.by.16S', 
               'selected', 
-              'loglik', 'npar', 'ntotal', 'AIC', 'BIC', 'chisq', 'df', 'pvalue')
+              'Log.likelihood', 'Parameters', 'Observations', 'AIC', 'BIC', 'CFI', 'Chi.squared', 'Deg.freedom', 'p.value')
 
 sem_tests %<>% .[, keep_cols]
 names(sem_tests) %<>%
   gsub('\\.', ' ', .) %>% 
-  gsub('loglik', 'log-likelihood', .) %>% 
-  gsub('npar', 'parameters', .) %>% 
-  gsub('ntotal', 'observations', .) %>% 
-  gsub('chisq', 'chi-squared', .) %>% 
-  gsub('df', 'deg freedom', .) %>% 
+  gsub('Log likelihood', 'log-likelihood', .) %>% 
+  # gsub('npar', 'parameters', .) %>% 
+  # gsub('ntotal', 'observations', .) %>% 
+  gsub('Chi squared', 'chi-squared', .) %>% 
+  gsub('Deg freedom', 'deg freedom', .) %>% 
   sapply(function(x) {
     substr(x, 1, 1) %<>% toupper
     return(x)
   }) %>% 
-  gsub('Pvalue', 'p value', .)
+  gsub('P value', 'p value', .)
 
-'SUPPL TAB 6 - SEM Statistics.csv' %>% 
+'SUPPL TAB 10 - SEM Statistics.csv' %>% 
   here('Results', .) %>% 
-  write.csv(sem_tests, ., row.names=FALSE)
+  write.csv(sem_tests, ., row.names=FALSE, na='')
 
-# Table S7: Candidate Taxa
-"SUPPL TAB 7 - Candidate Taxa.csv" %>% 
+# Table S11: Candidate Taxa
+"SUPPL TAB 11 - Candidate Taxa.csv" %>% 
   here('Results', .) %>% 
   write.csv(taxa_results, ., row.names=FALSE)

@@ -33,7 +33,7 @@ pretty_crop = c(corn = 'Corn',
 pretty_measure = c(seedling = 'Biomass, g/plant',
                flowering = 'Biomass, g/plant',
                yield = 'kg/ha')
-pretty_cont = c(ROTATION_LENGTH = 'Rotation Diversity:\nTwo vs Four Species',
+pretty_cont = c(ROTATION_LENGTH = 'Rotation Diversity:\nFour vs Two Species',
                FOLLOW_CORN = 'Previous Crop Legacy:\nCorn vs Wheat',
                FOLLOW_SOY = 'Previous Crop Legacy:\nSoybean vs Other',
                WITH_PEA = 'Rotation With Pea:\nYes vs No',
@@ -53,8 +53,8 @@ palette = c(CS = '#A8AA39', # MEDIUM YELLOW,
             CSSwSf = '#17264A') # DARK BLUE
 
 # Output
-plot_out = c(corn = 'FIG 2 - Corn Yield, Biomass with Contrasts.jpeg',
-             soy = 'FIG 5 - Soybean Yield, Biomass with Contrasts.jpeg')
+plot_out = c(corn = 'FIG 3 - Corn Yield, Biomass with Contrasts.jpeg',
+             soy = 'FIG 6 - Soybean Yield, Biomass with Contrasts.jpeg')
 
 #### Begin yield/bimass dataframe ####
 facts = c('CROP', 'ROTATION', 'YEAR', 'SAMPLING')

@@ -1,0 +1,13 @@
+16S
+             original no_bradyrhizobium     filtered pct_reduction
+ASVs     1.012300e+04      1.009400e+04 5.540000e+02         -94.5
+samples  1.590000e+02      1.590000e+02 1.470000e+02          -7.5
+reads    1.273117e+06      8.741220e+05 4.699730e+05         -46.2
+sparsity 9.833178e-01      9.841521e-01 8.762126e-01         -11.0
+
+ITS
+             original     filtered pct_reduction
+ASVs     2.840000e+03 4.330000e+02         -84.8
+samples  1.590000e+02 1.590000e+02           0.0
+reads    1.165805e+06 1.037187e+06         -11.0
+sparsity 9.622797e-01 8.192369e-01         -14.9
